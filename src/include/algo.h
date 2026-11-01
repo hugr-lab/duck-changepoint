@@ -39,3 +39,11 @@ double cpt_segmentation_cost(const cpt_cost *cost, const cpt_bkps *bkps);
 // PELT, Killick, Fearnhead & Eckley (2012). Exact minimiser of sum C + beta * (#segments).
 int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size, cpt_bkps *out, char *err);
 
+// Binary segmentation. n_bkps >= 0 selects "stop after n_bkps splits"; otherwise splitting stops
+// once the best gain is not larger than pen.
+int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int64_t min_size, cpt_bkps *out,
+               char *err);
+
+// Optimal partition into exactly n_bkps + 1 segments (segment neighbourhood), O(n_bkps n^2).
+int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, cpt_bkps *out, char *err);
+

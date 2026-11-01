@@ -1,0 +1,85 @@
+# name: test/sql/cpt_segment_stats.test
+# description: segment statistics and the README examples for joining break points back to rows
+# group: [cpt]
+
+require cpt
+
+query I
+SELECT cpt_segment_stats([1, 2, 3, 10, 12]::DOUBLE[], [3, 5])
+----
+[{'start': 1, 'end': 3, 'mean': 2.0, 'var': 1.0, 'n': 3}, {'start': 4, 'end': 5, 'mean': 11.0, 'var': 2.0, 'n': 2}]
+
+# var is the sample variance and NULL for a one-element segment
+query I
+SELECT cpt_segment_stats([4, 1, 2, 3]::DOUBLE[], [1, 4])
+----
+[{'start': 1, 'end': 1, 'mean': 4.0, 'var': NULL, 'n': 1}, {'start': 2, 'end': 4, 'mean': 2.0, 'var': 1.0, 'n': 3}]
+
+statement ok
+CREATE TABLE readings AS
+SELECT sensor_id,
+       TIMESTAMP '2026-01-01' + to_minutes(i) AS ts,
+       (CASE WHEN i < cp THEN 0.0 ELSE 4.0 END) + 0.3 * sin(i * 1.7 + sensor_id) AS value
+FROM (VALUES (1, 40), (2, 75), (3, 120)) s(sensor_id, cp), range(160) t(i);
+
+statement ok
+CREATE TABLE s AS
+SELECT sensor_id, list(value ORDER BY ts) AS xs, list(ts ORDER BY ts) AS tss
+FROM readings GROUP BY sensor_id;
+
+# README: segment statistics per sensor
+query IIIII
+SELECT sensor_id, st.start, st."end", round(st.mean, 1), st.n
+FROM (SELECT sensor_id, unnest(cpt_segment_stats(xs, cpt_pelt(xs, 'l2'))) AS st FROM s)
+ORDER BY sensor_id, st.start
+----
+1	1	40	0.0	40
+1	41	160	4.0	120
+2	1	75	0.0	75
+2	76	160	4.0	85
+3	1	120	0.0	120
+3	121	160	4.0	40
+
+# README: label every row with its segment number (lambda version)
+query III
+WITH b AS (SELECT sensor_id, xs, tss, cpt_pelt(xs, 'l2') AS bkps FROM s),
+labelled AS (
+    SELECT sensor_id,
+           unnest(tss) AS ts,
+           unnest(xs) AS value,
+           -- segment number = 1 + number of segment ends strictly before this position
+           unnest(list_transform(range(1, len(xs) + 1), lambda pos: len(list_filter(bkps, lambda e: e < pos)) + 1)) AS segment
+    FROM b
+)
+SELECT sensor_id, segment, count(*) FROM labelled GROUP BY ALL ORDER BY ALL
+----
+1	1	40
+1	2	120
+2	1	75
+2	2	85
+3	1	120
+3	2	40
+
+# README: label every row by joining positions to segment_stats (same answer)
+query I
+WITH b AS (SELECT sensor_id, xs, tss, cpt_pelt(xs, 'l2') AS bkps FROM s),
+rows AS (SELECT sensor_id, unnest(tss) AS ts, unnest(xs) AS value, generate_subscripts(xs, 1) AS pos FROM b),
+segs AS (
+    SELECT sensor_id, row_number() OVER (PARTITION BY sensor_id ORDER BY st.start) AS segment, st.start, st."end"
+    FROM (SELECT sensor_id, unnest(cpt_segment_stats(xs, bkps)) AS st FROM b)
+)
+SELECT count(*) FILTER (WHERE (r.sensor_id = 1 AND segment = CASE WHEN pos <= 40 THEN 1 ELSE 2 END)
+                           OR (r.sensor_id = 2 AND segment = CASE WHEN pos <= 75 THEN 1 ELSE 2 END)
+                           OR (r.sensor_id = 3 AND segment = CASE WHEN pos <= 120 THEN 1 ELSE 2 END))
+FROM rows r JOIN segs g ON r.sensor_id = g.sensor_id AND r.pos BETWEEN g.start AND g."end"
+----
+480
+
+# README: known number of change points
+query II
+SELECT sensor_id, cpt_dynp(xs, 1, 'l2') FROM s ORDER BY sensor_id
+----
+1	[40, 160]
+2	[75, 160]
+3	[120, 160]
+

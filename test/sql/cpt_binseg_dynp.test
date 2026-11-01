@@ -1,0 +1,93 @@
+# name: test/sql/cpt_binseg_dynp.test
+# description: binary segmentation and dynamic programming with a known number of change points
+# group: [cpt]
+
+require cpt
+
+statement ok
+SELECT setseed(0.42);
+
+statement ok
+CREATE TABLE mean4 AS
+SELECT list((CASE WHEN i < 250 THEN 0 WHEN i < 500 THEN 5 WHEN i < 750 THEN -3 ELSE 2 END)
+            + sqrt(-2 * ln(random())) * cos(2 * pi() * random()) ORDER BY i) AS xs
+FROM range(1000) t(i);
+
+# --- trivially separable series: binseg(k) and dynp(k) agree -----------------------------------
+
+statement ok
+CREATE TABLE steps AS
+SELECT list((i // 20) * 10.0 ORDER BY i) AS xs FROM range(100) t(i);
+
+# k well-separated changes (segments of 20 + 7j, levels 10 * j^2): binseg(k) = dynp(k) = truth
+query II
+WITH s AS (
+    SELECT k, list(CASE WHEN i < 20 THEN 0.0 ELSE 10.0 * pow(1 + ((i - 20) // 27), 2) END ORDER BY i) AS xs,
+           list_append(list_transform(range(0, k), lambda j: 20 + 27 * j), 20 + 27 * k) AS truth
+    FROM range(1, 5) r(k), range(0, 20 + 27 * k) t(i) GROUP BY k
+)
+SELECT count(*), bool_and(cpt_binseg(xs, 'l2', k) = truth AND cpt_dynp(xs, k, 'l2') = truth) FROM s
+----
+4	true
+
+query II
+SELECT cpt_binseg(xs, 'l2', 4), cpt_dynp(xs, 4) FROM steps
+----
+[20, 40, 60, 80, 100]	[20, 40, 60, 80, 100]
+
+query III
+SELECT cpt_binseg(xs, 'l2', 3), cpt_dynp(xs, 3), cpt_pelt(xs) FROM mean4
+----
+[250, 500, 750, 1000]	[250, 500, 750, 1000]	[250, 500, 750, 1000]
+
+# n_bkps = 0 is the whole series
+query II
+SELECT cpt_binseg(xs, 'l2', 0), cpt_dynp(xs, 0) FROM mean4
+----
+[1000]	[1000]
+
+# --- binseg stopping rules ----------------------------------------------------------------------
+
+# default (no n_bkps, no penalty) is the same BIC as PELT
+query I
+SELECT cpt_binseg(xs) = cpt_binseg(xs, 'l2', NULL, 2 * ln(1000)) FROM mean4
+----
+true
+
+query I
+SELECT cpt_binseg(xs, 'l2', NULL, 2 * ln(1000)) FROM mean4
+----
+[250, 500, 750, 1000]
+
+# asking for more splits than fit returns as many as the greedy search can make: the first split
+# lands at 3 and neither 3-point half can be split with min_size 2 (dynp can still place 2)
+query II
+SELECT cpt_binseg([1, 2, 3, 4, 5, 6]::DOUBLE[], 'l2', 10, NULL, 2), cpt_dynp([1, 2, 3, 4, 5, 6]::DOUBLE[], 2, 'l2', 2)
+----
+[3, 6]	[2, 4, 6]
+
+# --- dynp is exact: it is never worse than binseg for the same number of change points --------
+
+query I
+WITH c AS (
+    SELECT k, cpt_segment_stats(xs, cpt_dynp(xs, k, 'l2')) AS d, cpt_segment_stats(xs, cpt_binseg(xs, 'l2', k)) AS b
+    FROM mean4, range(1, 8) r(k)
+)
+SELECT bool_and(
+    list_sum(list_transform(d, lambda s: coalesce(s.var, 0) * (s.n - 1)))
+    <= list_sum(list_transform(b, lambda s: coalesce(s.var, 0) * (s.n - 1))) + 1e-6)
+FROM c
+----
+true
+
+# min_size is respected by both
+query II
+SELECT cpt_dynp([0, 0, 9, 0, 0, 0]::DOUBLE[], 1, 'l2', 3), cpt_binseg([0, 0, 9, 0, 0, 0]::DOUBLE[], 'l2', 1, NULL, 3)
+----
+[3, 6]	[3, 6]
+
+# other costs
+query III
+SELECT cpt_dynp(xs, 3, 'l1'), cpt_dynp(xs, 3, 'normal'), cpt_binseg(xs, 'l1', 3) FROM mean4
+----
+[250, 500, 750, 1000]	[250, 500, 750, 1000]	[250, 500, 750, 1000]

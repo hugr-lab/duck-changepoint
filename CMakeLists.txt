@@ -42,6 +42,9 @@ set(EXTENSION_SOURCES
         # SQL surface: vector I/O and function registration
         src/functions/list_io.c
         src/functions/cpt_pelt.c
+        src/functions/cpt_binseg.c
+        src/functions/cpt_dynp.c
+        src/functions/cpt_segment_stats.c
         # Entrypoint
         src/cpt_extension.c
 )

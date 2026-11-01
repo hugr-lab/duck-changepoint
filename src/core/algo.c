@@ -215,3 +215,173 @@ int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size,
 	free(vals);
 	return rc;
 }
+
+//===--------------------------------------------------------------------===//
+// Binary segmentation
+//===--------------------------------------------------------------------===//
+
+typedef struct {
+	int64_t a, b;
+	int64_t split; // -1: no admissible split
+	double gain;
+} binseg_segment;
+
+static void binseg_best_split(const cpt_cost *cost, int64_t m, binseg_segment *seg) {
+	seg->split = -1;
+	seg->gain = -INFINITY;
+	if (seg->b - seg->a < 2 * m) {
+		return;
+	}
+	double whole = cost->eval(cost->ctx, seg->a, seg->b);
+	double best = INFINITY;
+	for (int64_t s = seg->a + m; s <= seg->b - m; s++) {
+		double v = cost->eval(cost->ctx, seg->a, s) + cost->eval(cost->ctx, s, seg->b);
+		if (v < best) {
+			best = v;
+			seg->split = s;
+		}
+	}
+	seg->gain = whole - best;
+}
+
+int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int64_t min_size, cpt_bkps *out,
+               char *err) {
+	out->pos = NULL;
+	out->count = 0;
+	int64_t m = cpt_effective_min_size(cost, min_size);
+	if (n < 2 * m || n_bkps == 0) {
+		return bkps_single(n, out, err);
+	}
+	// Segments are kept in position order; at most n / m of them can exist.
+	int64_t cap = n / m + 1;
+	binseg_segment *segs = (binseg_segment *)malloc(sizeof(binseg_segment) * (size_t)cap);
+	if (!segs) {
+		snprintf(err, CPT_ERR_LEN, "out of memory");
+		return 1;
+	}
+	int64_t n_segs = 1;
+	segs[0].a = 0;
+	segs[0].b = n;
+	binseg_best_split(cost, m, &segs[0]);
+
+	for (;;) {
+		int64_t best = -1;
+		for (int64_t i = 0; i < n_segs; i++) {
+			if (segs[i].split >= 0 && (best < 0 || segs[i].gain > segs[best].gain)) {
+				best = i;
+			}
+		}
+		if (best < 0) {
+			break;
+		}
+		if (n_bkps >= 0) {
+			if (n_segs - 1 >= n_bkps) {
+				break;
+			}
+		} else if (!(segs[best].gain > pen)) {
+			break;
+		}
+		memmove(&segs[best + 2], &segs[best + 1], sizeof(binseg_segment) * (size_t)(n_segs - best - 1));
+		int64_t s = segs[best].split;
+		segs[best + 1].a = s;
+		segs[best + 1].b = segs[best].b;
+		segs[best].b = s;
+		binseg_best_split(cost, m, &segs[best]);
+		binseg_best_split(cost, m, &segs[best + 1]);
+		n_segs++;
+	}
+
+	out->pos = (int64_t *)malloc(sizeof(int64_t) * (size_t)n_segs);
+	if (!out->pos) {
+		free(segs);
+		snprintf(err, CPT_ERR_LEN, "out of memory");
+		return 1;
+	}
+	for (int64_t i = 0; i < n_segs; i++) {
+		out->pos[i] = segs[i].b;
+	}
+	out->count = n_segs;
+	free(segs);
+	return 0;
+}
+
+//===--------------------------------------------------------------------===//
+// Dynamic programming with a known number of change points
+//===--------------------------------------------------------------------===//
+
+int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, cpt_bkps *out, char *err) {
+	out->pos = NULL;
+	out->count = 0;
+	int64_t m = cpt_effective_min_size(cost, min_size);
+	if (n == 0) {
+		return 0;
+	}
+	int64_t n_seg = n_bkps + 1;
+	if (n_bkps < 0 || n_seg > n / m) {
+		snprintf(err, CPT_ERR_LEN,
+		         "cannot split a series of length %lld into %lld segments of at least %lld elements",
+		         (long long)n, (long long)n_seg, (long long)m);
+		return 1;
+	}
+	size_t n1 = (size_t)n + 1;
+	double *prev_row = (double *)malloc(sizeof(double) * n1);
+	double *cur_row = (double *)malloc(sizeof(double) * n1);
+	// arg[k * (n + 1) + t]: start of the last segment in the best k+1-segment split of [0, t)
+	int64_t *arg = (int64_t *)malloc(sizeof(int64_t) * n1 * (size_t)n_seg);
+	if (!prev_row || !cur_row || !arg) {
+		free(prev_row);
+		free(cur_row);
+		free(arg);
+		snprintf(err, CPT_ERR_LEN, "out of memory allocating DP table (%lld x %lld)", (long long)n_seg,
+		         (long long)n1);
+		return 1;
+	}
+	for (int64_t t = 0; t <= n; t++) {
+		prev_row[t] = t >= m ? cost->eval(cost->ctx, 0, t) : INFINITY;
+		arg[t] = 0;
+	}
+	for (int64_t k = 1; k < n_seg; k++) {
+		int64_t *arg_k = arg + (size_t)k * n1;
+		// [0, t) as k+1 segments: t needs (k+1)*m points and the remaining segments need theirs.
+		int64_t t_lo = (k + 1) * m;
+		int64_t t_hi = n - (n_seg - k - 1) * m;
+		for (int64_t t = 0; t <= n; t++) {
+			cur_row[t] = INFINITY;
+			arg_k[t] = 0;
+		}
+		for (int64_t t = t_lo; t <= t_hi; t++) {
+			double best = INFINITY;
+			int64_t best_s = 0;
+			for (int64_t s = k * m; s <= t - m; s++) {
+				double v = prev_row[s] + cost->eval(cost->ctx, s, t);
+				if (v < best) {
+					best = v;
+					best_s = s;
+				}
+			}
+			cur_row[t] = best;
+			arg_k[t] = best_s;
+		}
+		double *tmp = prev_row;
+		prev_row = cur_row;
+		cur_row = tmp;
+	}
+
+	out->pos = (int64_t *)malloc(sizeof(int64_t) * (size_t)n_seg);
+	int rc = 0;
+	if (!out->pos) {
+		snprintf(err, CPT_ERR_LEN, "out of memory");
+		rc = 1;
+	} else {
+		out->count = n_seg;
+		int64_t t = n;
+		for (int64_t k = n_seg - 1; k >= 0; k--) {
+			out->pos[k] = t;
+			t = arg[(size_t)k * n1 + t];
+		}
+	}
+	free(prev_row);
+	free(cur_row);
+	free(arg);
+	return rc;
+}

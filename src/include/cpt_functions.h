@@ -11,3 +11,6 @@ bool cpt_add_overload(duckdb_scalar_function_set set, const char *name, duckdb_l
                       duckdb_logical_type ret, duckdb_scalar_function_t fn);
 
 bool cpt_register_pelt(duckdb_connection connection);
+bool cpt_register_binseg(duckdb_connection connection);
+bool cpt_register_dynp(duckdb_connection connection);
+bool cpt_register_segment_stats(duckdb_connection connection);
