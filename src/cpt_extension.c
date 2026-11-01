@@ -23,7 +23,7 @@ bool cpt_add_overload(duckdb_scalar_function_set set, const char *name, duckdb_l
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection, duckdb_extension_info info,
                             struct duckdb_extension_access *access) {
 	if (!cpt_register_pelt(connection) || !cpt_register_binseg(connection) || !cpt_register_dynp(connection) ||
-	    !cpt_register_segment_stats(connection)) {
+	    !cpt_register_crops(connection) || !cpt_register_segment_stats(connection)) {
 		access->set_error(info, "cpt: failed to register functions");
 		return false;
 	}

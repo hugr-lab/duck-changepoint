@@ -1,0 +1,149 @@
+# name: test/sql/cpt_basic.test
+# description: loading, empty/NULL handling, argument validation, overload resolution
+# group: [cpt]
+
+statement error
+SELECT cpt_pelt([1.0, 2.0]);
+----
+Catalog Error
+
+require cpt
+
+# --- empty and NULL series -------------------------------------------------------------------
+
+query IIII
+SELECT cpt_pelt([]::DOUBLE[]), cpt_binseg([]::DOUBLE[]), cpt_dynp([]::DOUBLE[], 0), cpt_crops([]::DOUBLE[], 'l2', 1, 2)
+----
+[]	[]	[]	[{'penalty': 1.0, 'n_bkps': 0, 'bkps': []}]
+
+query IIIII
+SELECT cpt_pelt(NULL::DOUBLE[]), cpt_binseg(NULL::DOUBLE[]), cpt_dynp(NULL::DOUBLE[], 1), cpt_crops(NULL::DOUBLE[], 'l2', 1, 2), cpt_segment_stats(NULL, [1])
+----
+NULL	NULL	NULL	NULL	NULL
+
+query I
+SELECT cpt_segment_stats([]::DOUBLE[], [])
+----
+[]
+
+statement error
+SELECT cpt_pelt([1.0, NULL, 3.0])
+----
+series contains a NULL at position 2
+
+statement error
+SELECT cpt_pelt([1.0, 'nan'::DOUBLE, 3.0])
+----
+non-finite value at position 2
+
+# --- single segment and tiny inputs ----------------------------------------------------------
+
+query III
+SELECT cpt_pelt([7.0]), cpt_pelt([1.0, 1.0, 1.0]), cpt_binseg([5.0, 5.0])
+----
+[1]	[3]	[2]
+
+# a series shorter than 2 * min_size cannot be split
+query I
+SELECT cpt_pelt([0, 0, 0, 100, 100]::DOUBLE[], 'l2', 0.0, 3)
+----
+[5]
+
+# integer lists are cast to DOUBLE[]
+query I
+SELECT cpt_pelt([0, 0, 0, 0, 10, 10, 10, 10], 'l2', 1.0)
+----
+[4, 8]
+
+# --- argument validation ---------------------------------------------------------------------
+
+statement error
+SELECT cpt_pelt([1.0, 2.0], 'l3')
+----
+unknown cost 'l3'
+
+statement error
+SELECT cpt_pelt([1.0, 2.0], 'l2', 'hqc')
+----
+unknown penalty 'hqc'
+
+statement error
+SELECT cpt_pelt([1.0, 2.0], 'l2', -1.0)
+----
+penalty must be a finite number >= 0
+
+statement error
+SELECT cpt_pelt([1.0, 2.0], 'l2', NULL, 0)
+----
+min_size must be >= 1
+
+statement error
+SELECT cpt_pelt([1.0, 2.5, 3.0], 'poisson')
+----
+requires non-negative integer values; element 2 is 2.5
+
+statement error
+SELECT cpt_pelt([1.0, -2.0], 'poisson')
+----
+requires non-negative integer values
+
+statement error
+SELECT cpt_binseg([1.0, 2.0, 3.0], 'l2', 1, 5.0)
+----
+give either n_bkps or penalty, not both
+
+statement error
+SELECT cpt_dynp([1.0, 2.0, 3.0], NULL)
+----
+n_bkps must not be NULL
+
+statement error
+SELECT cpt_dynp([1.0, 2.0, 3.0], 3)
+----
+cannot split a series of length 3 into 4 segments
+
+statement error
+SELECT cpt_crops([1.0, 2.0, 3.0], 'l2', 5, 1)
+----
+pen_min (5) must be <= pen_max (1)
+
+statement error
+SELECT cpt_segment_stats([1.0, 2.0, 3.0], [1, 2])
+----
+the last break point must equal the series length 3
+
+statement error
+SELECT cpt_segment_stats([1.0, 2.0, 3.0], [2, 2, 3])
+----
+must be strictly increasing
+
+# --- overloads and NULL meaning "default" ----------------------------------------------------
+
+# cost is case-insensitive; NULL cost means 'l2'; NULL penalty means BIC; NULL min_size means 1
+query I
+SELECT cpt_pelt([0, 0, 0, 0, 10, 10, 10, 10]::DOUBLE[], 'L2') = cpt_pelt([0, 0, 0, 0, 10, 10, 10, 10]::DOUBLE[], NULL, NULL, NULL)
+----
+true
+
+# penalty given as DOUBLE, INTEGER literal, or name
+query III
+SELECT cpt_pelt(xs, 'l2', 1000.0), cpt_pelt(xs, 'l2', 1), cpt_pelt(xs, 'l2', 'BIC')
+FROM (SELECT [0, 0, 0, 0, 10, 10, 10, 10]::DOUBLE[] AS xs)
+----
+[8]	[4, 8]	[4, 8]
+
+# constant (non-flat) argument vectors across many rows
+query II
+SELECT count(*), count(DISTINCT cpt_pelt([0, 0, 0, 5, 5, 5]::DOUBLE[], 'l2', 1.0)) FROM range(5000)
+----
+5000	1
+
+# 3000 groups (more rows than one 2048-row vector): five zeros then five values >= 1, so every
+# group splits exactly once (l2 gain >= 2.5 > penalty 0.5)
+query III
+SELECT count(*), sum(len(b)), count(*) FILTER (WHERE b = [5, 10]) FROM (
+    SELECT cpt_pelt(list(CASE WHEN i % 10 < 5 THEN 0.0 ELSE (i // 10) % 7 + 1.0 END ORDER BY i), 'l2', 0.5) AS b
+    FROM range(30000) t(i) GROUP BY i // 10
+)
+----
+3000	6000	3000

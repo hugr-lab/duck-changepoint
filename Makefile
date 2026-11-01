@@ -1,4 +1,4 @@
-.PHONY: clean clean_all compare_ruptures check_optimality help
+.PHONY: clean clean_all compare_ruptures check_optimality test_compat test_core reference-data help
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -29,6 +29,16 @@ test: test_debug
 test_debug: test_extension_debug
 test_release: test_extension_release
 
+# Run the SQL tests against the oldest supported DuckDB (in a separate venv) as well as the default one.
+COMPAT_DUCKDB_VERSION ?= 1.5.6
+COMPAT_VENV := configure/venv-compat
+test_compat: release
+	@test -d $(COMPAT_VENV) || ( $(PYTHON_BIN) -m venv $(COMPAT_VENV) && \
+		$(COMPAT_VENV)/bin/python3 -m pip install -q duckdb==$(COMPAT_DUCKDB_VERSION) packaging \
+		git+https://github.com/duckdb/duckdb-sqllogictest-python@2ac8dbc012ddbd96a57dca37784fd8ee3c0eb021 )
+	$(COMPAT_VENV)/bin/python3 -m duckdb_sqllogictest --test-dir test/sql \
+		--external-extension build/release/$(EXTENSION_NAME).duckdb_extension
+
 # Not part of `make test`: needs ruptures + numpy (installed into configure/venv on demand).
 compare_ruptures: release
 	$(PYTHON_VENV_BIN) -m pip install -q ruptures numpy
@@ -38,6 +48,22 @@ check_optimality: release
 	$(PYTHON_VENV_BIN) -m pip install -q numpy
 	$(PYTHON_VENV_BIN) test/python/check_optimality.py build/release/$(EXTENSION_NAME).duckdb_extension
 
+# Standalone C tests of src/core under AddressSanitizer + UndefinedBehaviorSanitizer (no DuckDB needed).
+CORE_TEST_BIN := build/test_core
+test_core:
+	@mkdir -p build
+	$(CC) -std=c11 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra \
+		-Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c src/core/algo.c -lm -o $(CORE_TEST_BIN)
+	$(CORE_TEST_BIN)
+
+# Regenerate test/data/*.csv and expected_*.json with R changepoint in a disposable container.
+CONTAINER ?= $(shell command -v container >/dev/null 2>&1 && echo container || echo docker)
+R_IMAGE ?= docker.io/rocker/r-ver:4.4.2
+reference-data:
+	$(CONTAINER) run --rm --volume "$(PROJ_DIR):/work" --workdir /work $(R_IMAGE) bash -c \
+		'Rscript -e "options(repos = c(CRAN = \"https://packagemanager.posit.co/cran/__linux__/noble/latest\")); \
+		install.packages(c(\"changepoint\", \"jsonlite\"), quiet = TRUE)" && Rscript tools/export_reference.R'
+
 clean: clean_build clean_cmake
 clean_all: clean clean_configure
 
@@ -46,6 +72,9 @@ help:
 	@echo "make release | debug  - build build/{release,debug}/cpt.duckdb_extension"
 	@echo "make test             - SQL logic tests against the debug build"
 	@echo "make test_release     - SQL logic tests against the release build"
+	@echo "make test_compat      - SQL logic tests on DuckDB $(COMPAT_DUCKDB_VERSION) (oldest supported)"
+	@echo "make test_core        - C tests of src/core under ASan/UBSan (no DuckDB needed)"
 	@echo "make compare_ruptures - cross-check against ruptures (manual, not CI gating)"
 	@echo "make check_optimality - PELT vs unpruned Optimal Partitioning (manual, not CI gating)"
+	@echo "make reference-data   - regenerate test/data from R changepoint (needs Apple container or docker)"
 

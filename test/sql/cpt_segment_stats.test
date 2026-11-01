@@ -75,7 +75,7 @@ FROM rows r JOIN segs g ON r.sensor_id = g.sensor_id AND r.pos BETWEEN g.start A
 ----
 480
 
-# README: known number of change points
+# README: known number of change points, penalty sweep
 query II
 SELECT sensor_id, cpt_dynp(xs, 1, 'l2') FROM s ORDER BY sensor_id
 ----
@@ -83,3 +83,7 @@ SELECT sensor_id, cpt_dynp(xs, 1, 'l2') FROM s ORDER BY sensor_id
 2	[75, 160]
 3	[120, 160]
 
+query I
+SELECT count(*) > 0 FROM (SELECT unnest(cpt_crops(xs, 'l2', 2 * ln(len(xs)), 50 * ln(len(xs)))) FROM s)
+----
+true

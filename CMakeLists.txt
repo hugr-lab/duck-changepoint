@@ -44,6 +44,7 @@ set(EXTENSION_SOURCES
         src/functions/cpt_pelt.c
         src/functions/cpt_binseg.c
         src/functions/cpt_dynp.c
+        src/functions/cpt_crops.c
         src/functions/cpt_segment_stats.c
         # Entrypoint
         src/cpt_extension.c

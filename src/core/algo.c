@@ -385,3 +385,146 @@ int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, 
 	free(arg);
 	return rc;
 }
+
+//===--------------------------------------------------------------------===//
+// CROPS
+//===--------------------------------------------------------------------===//
+
+typedef struct {
+	cpt_crops_entry *items;
+	int64_t count, cap;
+} crops_set;
+
+// Run PELT at beta and return the index of its segmentation in the set (merging duplicates).
+static int crops_run(const cpt_cost *cost, int64_t n, double beta, int64_t min_size, crops_set *set, int64_t *idx,
+                     char *err) {
+	cpt_penalty pen = {beta, 0};
+	cpt_bkps b;
+	if (cpt_pelt(cost, n, pen, min_size, &b, err)) {
+		return 1;
+	}
+	// Optimal segmentations with the same number of change points have the same cost, so the
+	// number of change points identifies a point on the lower envelope.
+	for (int64_t i = 0; i < set->count; i++) {
+		if (set->items[i].bkps.count == b.count) {
+			if (beta < set->items[i].penalty) {
+				set->items[i].penalty = beta;
+			}
+			cpt_bkps_free(&b);
+			*idx = i;
+			return 0;
+		}
+	}
+	if (set->count == set->cap) {
+		int64_t cap = set->cap ? set->cap * 2 : 16;
+		cpt_crops_entry *items = (cpt_crops_entry *)realloc(set->items, sizeof(cpt_crops_entry) * (size_t)cap);
+		if (!items) {
+			cpt_bkps_free(&b);
+			snprintf(err, CPT_ERR_LEN, "out of memory");
+			return 1;
+		}
+		set->items = items;
+		set->cap = cap;
+	}
+	cpt_crops_entry *e = &set->items[set->count];
+	e->penalty = beta;
+	e->bkps = b;
+	e->cost = cpt_segmentation_cost(cost, &b);
+	*idx = set->count++;
+	return 0;
+}
+
+static int cmp_entry_penalty(const void *pa, const void *pb) {
+	const cpt_crops_entry *a = (const cpt_crops_entry *)pa;
+	const cpt_crops_entry *b = (const cpt_crops_entry *)pb;
+	if (a->penalty != b->penalty) {
+		return a->penalty < b->penalty ? -1 : 1;
+	}
+	return (a->bkps.count < b->bkps.count) - (a->bkps.count > b->bkps.count);
+}
+
+void cpt_crops_free(cpt_crops_entry *entries, int64_t count) {
+	if (!entries) {
+		return;
+	}
+	for (int64_t i = 0; i < count; i++) {
+		cpt_bkps_free(&entries[i].bkps);
+	}
+	free(entries);
+}
+
+int cpt_crops(const cpt_cost *cost, int64_t n, double pen_min, double pen_max, int64_t min_size,
+              cpt_crops_entry **out, int64_t *out_count, char *err) {
+	*out = NULL;
+	*out_count = 0;
+	crops_set set = {NULL, 0, 0};
+	typedef struct {
+		double b0, b1;
+		int64_t i0, i1;
+	} interval;
+	interval *stack = NULL;
+	int64_t n_stack = 0, cap_stack = 0;
+	int rc = 0;
+
+	int64_t i_min, i_max;
+	if (crops_run(cost, n, pen_min, min_size, &set, &i_min, err) ||
+	    (pen_max > pen_min && crops_run(cost, n, pen_max, min_size, &set, &i_max, err))) {
+		rc = 1;
+		goto done;
+	}
+	if (pen_max > pen_min) {
+		cap_stack = 16;
+		stack = (interval *)malloc(sizeof(interval) * (size_t)cap_stack);
+		if (!stack) {
+			snprintf(err, CPT_ERR_LEN, "out of memory");
+			rc = 1;
+			goto done;
+		}
+		stack[n_stack++] = (interval) {pen_min, pen_max, i_min, i_max};
+	}
+	while (n_stack > 0) {
+		interval iv = stack[--n_stack];
+		int64_t m0 = set.items[iv.i0].bkps.count - 1;
+		int64_t m1 = set.items[iv.i1].bkps.count - 1;
+		if (m0 <= m1 + 1) {
+			continue; // no segmentation with a change point count strictly between them
+		}
+		// Penalty at which the two segmentations have equal penalised cost.
+		double b_int = (set.items[iv.i1].cost - set.items[iv.i0].cost) / (double)(m0 - m1);
+		if (!(b_int > iv.b0 && b_int < iv.b1)) {
+			continue; // rounding put the intersection outside the interval
+		}
+		int64_t i_int;
+		if (crops_run(cost, n, b_int, min_size, &set, &i_int, err)) {
+			rc = 1;
+			goto done;
+		}
+		int64_t m_int = set.items[i_int].bkps.count - 1;
+		if (m_int == m0 || m_int == m1) {
+			continue; // the two envelopes meet at b_int: nothing in between
+		}
+		if (n_stack + 2 > cap_stack) {
+			cap_stack *= 2;
+			interval *s2 = (interval *)realloc(stack, sizeof(interval) * (size_t)cap_stack);
+			if (!s2) {
+				snprintf(err, CPT_ERR_LEN, "out of memory");
+				rc = 1;
+				goto done;
+			}
+			stack = s2;
+		}
+		stack[n_stack++] = (interval) {iv.b0, b_int, iv.i0, i_int};
+		stack[n_stack++] = (interval) {b_int, iv.b1, i_int, iv.i1};
+	}
+	qsort(set.items, (size_t)set.count, sizeof(cpt_crops_entry), cmp_entry_penalty);
+
+done:
+	free(stack);
+	if (rc) {
+		cpt_crops_free(set.items, set.count);
+		return rc;
+	}
+	*out = set.items;
+	*out_count = set.count;
+	return 0;
+}

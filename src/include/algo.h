@@ -47,3 +47,14 @@ int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int6
 // Optimal partition into exactly n_bkps + 1 segments (segment neighbourhood), O(n_bkps n^2).
 int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, cpt_bkps *out, char *err);
 
+typedef struct {
+	double penalty; // smallest penalty in the sweep at which PELT returned this segmentation
+	double cost;    // unpenalised cost of the segmentation
+	cpt_bkps bkps;
+} cpt_crops_entry;
+
+// CROPS, Haynes, Eckley & Fearnhead (2017): every distinct optimal segmentation for penalties in
+// [pen_min, pen_max]. Entries are sorted by penalty ascending (n_bkps descending).
+int cpt_crops(const cpt_cost *cost, int64_t n, double pen_min, double pen_max, int64_t min_size,
+              cpt_crops_entry **out, int64_t *out_count, char *err);
+void cpt_crops_free(cpt_crops_entry *entries, int64_t count);

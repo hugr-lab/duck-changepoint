@@ -1,0 +1,72 @@
+# name: test/sql/cpt_crops.test
+# description: CROPS penalty sweep (Haynes, Eckley & Fearnhead 2017)
+# group: [cpt]
+
+require cpt
+
+statement ok
+SELECT setseed(0.42);
+
+statement ok
+CREATE TABLE mean4 AS
+SELECT list((CASE WHEN i < 250 THEN 0 WHEN i < 500 THEN 5 WHEN i < 750 THEN -3 ELSE 2 END)
+            + sqrt(-2 * ln(random())) * cos(2 * pi() * random()) ORDER BY i) AS xs
+FROM range(1000) t(i);
+
+# every segmentation PELT produces at a penalty in [pen_min, pen_max] is in the CROPS output
+query I
+WITH c AS (SELECT xs, cpt_crops(xs, 'l2', 2, 2000) AS sweep FROM mean4)
+SELECT bool_and(list_contains(list_transform(sweep, lambda e: e.bkps), cpt_pelt(xs, 'l2', pen)))
+FROM c, (SELECT 2.0 + 7.5 * k AS pen FROM range(0, 267) r(k))
+----
+true
+
+# entries are ordered by penalty (ascending) and n_bkps (descending), and distinct
+query III
+WITH c AS (SELECT cpt_crops(xs, 'l2', 2, 2000) AS sweep FROM mean4)
+SELECT list_sort(list_transform(sweep, lambda e: e.penalty)) = list_transform(sweep, lambda e: e.penalty),
+       list_reverse_sort(list_transform(sweep, lambda e: e.n_bkps)) = list_transform(sweep, lambda e: e.n_bkps),
+       len(list_distinct(list_transform(sweep, lambda e: e.n_bkps))) = len(sweep)
+FROM c
+----
+true	true	true
+
+# re-running PELT at an entry's penalty reproduces its segmentation
+query I
+WITH c AS (SELECT xs, unnest(cpt_crops(xs, 'l2', 2, 2000)) AS e FROM mean4)
+SELECT bool_and(cpt_pelt(xs, 'l2', e.penalty) = e.bkps) FROM c
+----
+true
+
+# n_bkps = len(bkps) - 1; the 3-change segmentation is the truth
+query II
+SELECT e.n_bkps = len(e.bkps) - 1, e.bkps
+FROM (SELECT unnest(cpt_crops(xs, 'l2', 2 * ln(1000), 50 * ln(1000))) AS e FROM mean4)
+WHERE e.n_bkps = 3
+----
+true	[250, 500, 750, 1000]
+
+# at the upper end of a wide sweep everything collapses to one segment
+query I
+SELECT list_last(cpt_crops(xs, 'l2', 1, 1e7)).bkps FROM mean4
+----
+[1000]
+
+# pen_min = pen_max is a single PELT run
+query I
+SELECT cpt_crops(xs, 'l2', 13.8, 13.8) = [{'penalty': 13.8, 'n_bkps': 3, 'bkps': cpt_pelt(xs, 'l2', 13.8)}] FROM mean4
+----
+true
+
+# other costs
+query II
+SELECT len(cpt_crops(xs, 'l1', 0.5, 5000)) > 10, len(cpt_crops(xs, 'normal', 0.5, 5000)) > 10 FROM mean4
+----
+true	true
+
+# min_size 300: no 3-segment split can put a boundary at 500, and the best one (dynp: cost 8340)
+# is worse than [500, 1000] (cost 7166), so even penalty 0 yields a single change point
+query II
+SELECT cpt_crops(xs, 'l2', 0, 500, 300), cpt_dynp(xs, 2, 'l2', 300) FROM mean4
+----
+[{'penalty': 0.0, 'n_bkps': 1, 'bkps': [500, 1000]}]	[400, 700, 1000]
