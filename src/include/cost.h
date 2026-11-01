@@ -26,9 +26,9 @@ typedef struct cpt_cost {
 	void (*free)(void *ctx);
 } cpt_cost;
 
-typedef enum { CPT_COST_L2 = 0 } cpt_cost_kind;
+typedef enum { CPT_COST_L2 = 0, CPT_COST_NORMAL, CPT_COST_POISSON, CPT_COST_L1 } cpt_cost_kind;
 
-// Parse a cost name ('l2'; case-insensitive). Returns -1 if unknown.
+// Parse a cost name ('l2', 'normal', 'poisson', 'l1'; case-insensitive). Returns -1 if unknown.
 int cpt_cost_parse(const char *name, size_t len);
 
 // Allocate the context for `kind` and run init(). On failure returns non-zero, writes err and
@@ -36,3 +36,8 @@ int cpt_cost_parse(const char *name, size_t len);
 int cpt_cost_create(cpt_cost_kind kind, const double *x, int64_t n, cpt_cost *out, char *err);
 void cpt_cost_destroy(cpt_cost *cost);
 
+// l1 lives in its own translation unit (cost_l1.c); these are its hooks for cost.c.
+void *cpt_cost_l1_alloc(void);
+int cpt_cost_l1_init(void *ctx, const double *x, int64_t n, char *err);
+double cpt_cost_l1_eval(void *ctx, int64_t a, int64_t b);
+void cpt_cost_l1_free(void *ctx);

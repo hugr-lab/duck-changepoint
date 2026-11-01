@@ -37,6 +37,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(EXTENSION_SOURCES
         # Numerical core: no DuckDB dependency
         src/core/cost.c
+        src/core/cost_l1.c
         src/core/algo.c
         # SQL surface: vector I/O and function registration
         src/functions/list_io.c

@@ -76,6 +76,55 @@ static double l2_eval(void *ctx, int64_t a, int64_t b) {
 }
 
 //===--------------------------------------------------------------------===//
+// normal: changing mean and variance, len * ln(sigma_hat^2) (MLE variance)
+//===--------------------------------------------------------------------===//
+
+// Absolute floor for sigma_hat^2, the value R's changepoint uses (mll.meanvar). A segment with
+// zero variance (a run of equal values) would otherwise have cost -inf. Being absolute, it assumes
+// the data is not on a tiny scale: rescale series whose variance is below ~1e-9.
+#define CPT_NORMAL_VAR_FLOOR 1e-11
+
+static int normal_init(void *ctx, const double *x, int64_t n, char *err) {
+	return prefix_init((prefix_ctx *)ctx, x, n, 1, err);
+}
+
+static double normal_eval(void *ctx, int64_t a, int64_t b) {
+	const prefix_ctx *c = (const prefix_ctx *)ctx;
+	double len = (double)(b - a);
+	double var = prefix_ss(c, a, b) / len;
+	if (var < CPT_NORMAL_VAR_FLOOR) {
+		var = CPT_NORMAL_VAR_FLOOR;
+	}
+	return len * log(var);
+}
+
+//===--------------------------------------------------------------------===//
+// poisson: -2 * (S ln(S/len) - S), S = segment sum
+//===--------------------------------------------------------------------===//
+
+static int poisson_init(void *ctx, const double *x, int64_t n, char *err) {
+	for (int64_t i = 0; i < n; i++) {
+		if (!(x[i] >= 0) || x[i] != floor(x[i]) || isinf(x[i])) {
+			snprintf(err, CPT_ERR_LEN,
+			         "cost 'poisson' requires non-negative integer values; element %lld is %g", (long long)i + 1,
+			         x[i]);
+			return 1;
+		}
+	}
+	// Counts are summed exactly (no centring): S must be the true segment sum.
+	return prefix_init((prefix_ctx *)ctx, x, n, 0, err);
+}
+
+static double poisson_eval(void *ctx, int64_t a, int64_t b) {
+	const prefix_ctx *c = (const prefix_ctx *)ctx;
+	double s = c->s1[b] - c->s1[a];
+	if (s <= 0) {
+		return 0; // lim_{S->0} S ln S = 0
+	}
+	return -2.0 * (s * log(s / (double)(b - a)) - s);
+}
+
+//===--------------------------------------------------------------------===//
 // Factory
 //===--------------------------------------------------------------------===//
 
@@ -83,7 +132,10 @@ int cpt_cost_parse(const char *name, size_t len) {
 	static const struct {
 		const char *name;
 		cpt_cost_kind kind;
-	} names[] = {{"l2", CPT_COST_L2}};
+	} names[] = {{"l2", CPT_COST_L2},
+	             {"normal", CPT_COST_NORMAL},
+	             {"poisson", CPT_COST_POISSON},
+	             {"l1", CPT_COST_L1}};
 	for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
 		const char *candidate = names[i].name;
 		if (strlen(candidate) != len) {
@@ -119,6 +171,34 @@ int cpt_cost_create(cpt_cost_kind kind, const double *x, int64_t n, cpt_cost *ou
 		out->eval = l2_eval;
 		out->n_params = 1;
 		out->free = prefix_free;
+		break;
+	case CPT_COST_NORMAL:
+		out->name = "normal";
+		out->ctx = prefix_alloc();
+		out->init = normal_init;
+		out->eval = normal_eval;
+		out->n_params = 2;
+		out->min_len = 2; // sigma_hat^2 of a single point is 0
+		out->free = prefix_free;
+		break;
+	case CPT_COST_POISSON:
+		out->name = "poisson";
+		out->ctx = prefix_alloc();
+		out->init = poisson_init;
+		out->eval = poisson_eval;
+		out->n_params = 1;
+		out->free = prefix_free;
+		break;
+	case CPT_COST_L1:
+		// Pruning: C(a,b) = min_m sum |x_i - m| over [a,b). Splitting [a,b) at s lets each half pick
+		// its own median, so C(a,s) + C(s,b) <= C(a,b) and the assumption of Killick, Fearnhead &
+		// Eckley (2012), Theorem 3.1, holds with K = 0.
+		out->name = "l1";
+		out->ctx = cpt_cost_l1_alloc();
+		out->init = cpt_cost_l1_init;
+		out->eval = cpt_cost_l1_eval;
+		out->n_params = 1;
+		out->free = cpt_cost_l1_free;
 		break;
 	default:
 		snprintf(err, CPT_ERR_LEN, "unknown cost");

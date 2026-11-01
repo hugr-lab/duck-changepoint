@@ -90,7 +90,7 @@ int cpt_arg_cost(duckdb_data_chunk input, idx_t col, idx_t row, cpt_cost_kind *k
 	cpt_read_varchar(vec, row, &name, &len);
 	int parsed = cpt_cost_parse(name, len);
 	if (parsed < 0) {
-		snprintf(err, CPT_ERR_LEN, "unknown cost '%.*s'; expected 'l2'",
+		snprintf(err, CPT_ERR_LEN, "unknown cost '%.*s'; expected one of 'l2', 'normal', 'poisson', 'l1'",
 		         (int)(len > 64 ? 64 : len), name);
 		return 1;
 	}
