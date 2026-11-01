@@ -1,4 +1,4 @@
-.PHONY: clean clean_all compare_ruptures check_optimality test_compat test_core reference-data help
+.PHONY: clean clean_all bench compare_ruptures check_optimality test_compat test_core reference-data help
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -56,6 +56,9 @@ test_core:
 		-Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c src/core/algo.c -lm -o $(CORE_TEST_BIN)
 	$(CORE_TEST_BIN)
 
+bench: release
+	$(PYTHON_VENV_BIN) bench/run_bench.py build/release/$(EXTENSION_NAME).duckdb_extension
+
 # Regenerate test/data/*.csv and expected_*.json with R changepoint in a disposable container.
 CONTAINER ?= $(shell command -v container >/dev/null 2>&1 && echo container || echo docker)
 R_IMAGE ?= docker.io/rocker/r-ver:4.4.2
@@ -77,4 +80,5 @@ help:
 	@echo "make compare_ruptures - cross-check against ruptures (manual, not CI gating)"
 	@echo "make check_optimality - PELT vs unpruned Optimal Partitioning (manual, not CI gating)"
 	@echo "make reference-data   - regenerate test/data from R changepoint (needs Apple container or docker)"
+	@echo "make bench            - l2 PELT runtime for n = 1e4, 1e5, 1e6"
 

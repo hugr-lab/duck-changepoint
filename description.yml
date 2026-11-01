@@ -1,0 +1,24 @@
+extension:
+  name: cpt
+  description: Offline change point detection (PELT, binary segmentation, dynamic programming, CROPS)
+  version: 0.1.0
+  language: C
+  build: cmake
+  license: MIT
+  excluded_platforms: ""
+  requires_toolchains: "python3"
+  maintainers:
+    - oluies
+
+repo:
+  github: oluies/duck-changepoint
+  ref: main
+
+docs:
+  hello_world: |
+    SELECT cpt_pelt(list(value ORDER BY ts), 'l2') AS bkps FROM readings;
+  extended_description: |
+    Change point detection on ordered series built with list(x ORDER BY ts). Exact PELT with BIC,
+    MBIC, AIC or numeric penalties; binary segmentation; optimal partitioning into a fixed number of
+    segments; CROPS penalty sweeps. Costs: l2 (mean), normal (mean and variance), poisson, l1 (median).
+    Written against the stable C API: one binary loads in DuckDB 1.5.6 and later.

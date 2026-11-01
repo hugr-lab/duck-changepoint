@@ -1,0 +1,34 @@
+#
+# Numerical core under ASan/UBSan, and the SQL tests on the oldest supported DuckDB (1.5.6).
+#
+name: Core and compatibility tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core:
+    name: test_core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test_core
+
+  compat:
+    name: SQL tests on DuckDB 1.5.6
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: make configure
+      - run: make test_compat
