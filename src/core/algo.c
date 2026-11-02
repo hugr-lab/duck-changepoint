@@ -143,7 +143,8 @@ int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size,
 	out->pos = NULL;
 	out->count = 0;
 	int64_t m = cpt_effective_min_size(cost, min_size);
-	if (n < 2 * m) {
+	// n / 2 < m is n < 2 * m without overflowing for a huge min_size.
+	if (n / 2 < m) {
 		return bkps_single(n, out, err);
 	}
 	const double beta = pen.beta;
@@ -252,7 +253,7 @@ typedef struct {
 static int binseg_best_split(const cpt_cost *cost, int64_t m, binseg_segment *seg, cpt_budget *budget, char *err) {
 	seg->split = -1;
 	seg->gain = -INFINITY;
-	if (seg->b - seg->a < 2 * m) {
+	if ((seg->b - seg->a) / 2 < m) {
 		return 0;
 	}
 	double whole = cost->eval(cost->ctx, seg->a, seg->b);
@@ -273,7 +274,7 @@ int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int6
 	out->pos = NULL;
 	out->count = 0;
 	int64_t m = cpt_effective_min_size(cost, min_size);
-	if (n < 2 * m || n_bkps == 0) {
+	if (n / 2 < m || n_bkps == 0) {
 		return bkps_single(n, out, err);
 	}
 	// Segments are kept in position order; at most n / m of them can exist.
@@ -347,13 +348,18 @@ int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, 
 	if (n == 0) {
 		return 0;
 	}
-	int64_t n_seg = n_bkps + 1;
-	if (n_bkps < 0 || n_seg > n / m) {
-		snprintf(err, CPT_ERR_LEN,
-		         "cannot split a series of length %lld into %lld segments of at least %lld elements",
-		         (long long)n, (long long)n_seg, (long long)m);
+	if (n_bkps < 0) {
+		snprintf(err, CPT_ERR_LEN, "n_bkps must be >= 0, got %lld", (long long)n_bkps);
 		return 1;
 	}
+	// n_bkps + 1 > n / m, checked before the addition so that it cannot overflow.
+	if (n_bkps >= n / m) {
+		snprintf(err, CPT_ERR_LEN,
+		         "cannot split a series of length %lld into %llu segments of at least %lld elements",
+		         (long long)n, (unsigned long long)n_bkps + 1, (long long)m);
+		return 1;
+	}
+	int64_t n_seg = n_bkps + 1;
 	size_t n1 = (size_t)n + 1;
 	double *prev_row = (double *)malloc(sizeof(double) * n1);
 	double *cur_row = (double *)malloc(sizeof(double) * n1);

@@ -102,6 +102,20 @@ SELECT cpt_dynp([1.0, 2.0, 3.0], 3)
 ----
 cannot split a series of length 3 into 4 segments
 
+# n_bkps + 1 would overflow int64
+statement error
+SELECT cpt_dynp([1.0, 2.0, 3.0], 9223372036854775807)
+----
+cannot split a series of length 3 into 9223372036854775808 segments
+
+# a min_size above n / 2 leaves no admissible split, even at the int64 limit
+query III
+SELECT cpt_pelt([0, 0, 9, 9]::DOUBLE[], 'l2', 1.0, 9223372036854775807),
+       cpt_binseg([0, 0, 9, 9]::DOUBLE[], 'l2', 1, NULL, 9223372036854775807),
+       cpt_crops([0, 0, 9, 9]::DOUBLE[], 'l2', 0, 10, 9223372036854775807)[1].bkps
+----
+[4]	[4]	[4]
+
 statement error
 SELECT cpt_crops([1.0, 2.0, 3.0], 'l2', 5, 1)
 ----

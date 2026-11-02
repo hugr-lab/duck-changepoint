@@ -52,8 +52,8 @@ check_optimality: release
 CORE_TEST_BIN := build/test_core
 test_core:
 	@mkdir -p build
-	$(CC) -std=c11 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra \
-		-Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c src/core/algo.c -lm -o $(CORE_TEST_BIN)
+	$(CC) -std=c11 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
+		-Wall -Wextra -Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c src/core/algo.c -lm -o $(CORE_TEST_BIN)
 	$(CORE_TEST_BIN)
 
 # Leak checks (manual). Dynamic: a host program links libduckdb, loads the debug extension and runs
