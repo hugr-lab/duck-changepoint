@@ -5,10 +5,10 @@ extension:
   language: C
   build: cmake
   license: MIT
-  excluded_platforms: ""
   requires_toolchains: "python3"
   maintainers:
     - oluies
+    - VGSML
 
 repo:
   github: hugr-lab/duck-changepoint
@@ -16,9 +16,43 @@ repo:
 
 docs:
   hello_world: |
-    SELECT cpt_pelt(list(value ORDER BY ts), 'l2') AS bkps FROM readings;
+    LOAD cpt;
+
+    -- 1000 noisy points whose level shifts after 250, 500 and 750
+    SELECT setseed(0.42);
+    SELECT cpt_pelt(list(
+             CASE WHEN i < 250 THEN 0 WHEN i < 500 THEN 5 WHEN i < 750 THEN -3 ELSE 2 END
+             + sqrt(-2 * ln(random())) * cos(2 * pi() * random())
+             ORDER BY i), 'l2') AS segment_ends
+    FROM range(1000) t(i);
+    -- [250, 500, 750, 1000]: the 1-based end of every segment
+
+    -- One series per group: changes in mean and variance per sensor
+    SELECT sensor_id, cpt_pelt(list(value ORDER BY ts), 'normal') AS segment_ends
+    FROM readings
+    GROUP BY sensor_id;
+
+    -- Mean and variance of every segment
+    SELECT unnest(cpt_segment_stats([0, 0, 0, 9, 9, 9]::DOUBLE[], [3, 6]));
   extended_description: |
-    Change point detection on ordered series built with list(x ORDER BY ts). Exact PELT with BIC,
-    MBIC, AIC or numeric penalties; binary segmentation; optimal partitioning into a fixed number of
-    segments; CROPS penalty sweeps. Costs: l2 (mean), normal (mean and variance), poisson, l1 (median).
-    Written against the stable C API: one binary loads in DuckDB 1.5.6 and later.
+    cpt finds the points where an ordered series changes its behaviour: a level shift, a change in
+    variance, in the rate of counts or in the median. Each function takes one series per row as
+    DOUBLE[] (build it with list(x ORDER BY ts)) and returns the 1-based end positions of the
+    segments, the last one equal to the length of the series.
+
+    - cpt_pelt: the exact optimum of the penalised cost (PELT, Killick et al. 2012), with exact
+      pruning also when a minimum segment length is set.
+    - cpt_binseg: binary segmentation, O(n log n), stops after n_bkps splits or at a penalty.
+    - cpt_dynp: the optimal split into exactly n_bkps + 1 segments.
+    - cpt_crops: every distinct optimal segmentation over a range of penalties (CROPS).
+    - cpt_segment_stats: start, end, mean, variance and length of every segment.
+
+    Costs: 'l2' (mean), 'normal' (mean and variance), 'poisson' (counts), 'l1' (median). Penalties:
+    a number, or 'bic' (default), 'mbic', 'aic' with the values of R's changepoint package. Results
+    are checked against ruptures and R changepoint.
+
+    A running scalar function cannot be interrupted, so the work on one series is capped by the
+    setting cpt_max_evaluations (default 1e9 cost evaluations, 0 = no limit).
+
+    Written in C11 on the stable C API: one binary loads in DuckDB 1.5.6 and later.
+    Documentation: https://github.com/hugr-lab/duck-changepoint
