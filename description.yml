@@ -11,7 +11,7 @@ extension:
     - oluies
 
 repo:
-  github: oluies/duck-changepoint
+  github: hugr-lab/duck-changepoint
   ref: main
 
 docs:

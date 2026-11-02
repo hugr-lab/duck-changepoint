@@ -307,7 +307,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [docs/TESTING.md](docs/TESTING.md).
 ### Reference data against R changepoint
 
 The comparison with R's changepoint package on Nile, Lai2005fig4, wave.c44137 and ftse100 lives in a
-separate repository, `duck-changepoint-reference`, because three of those datasets are distributed with
+separate repository, [hugr-lab/duck-changepoint-reference](https://github.com/hugr-lab/duck-changepoint-reference), because three of those datasets are distributed with
 changepoint under the GPL. With both repositories checked out side by side:
 
 ```sh
