@@ -13,10 +13,13 @@ jobs:
     name: test_core (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # the Makefile includes extension-ci-tools makefiles
       - run: make test_core
 
   compat:
