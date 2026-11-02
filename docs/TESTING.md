@@ -5,6 +5,7 @@
 | SQL logic tests | `make test` (debug), `make test_release` | yes | `test/sql/*.test`: results, errors, NULL/empty handling, overloads, GROUP BY, synthetic series |
 | Oldest DuckDB | `make test_compat` | recommended before release | the same SQL tests with DuckDB 1.5.6 |
 | Core C tests | `make test_core` | yes (CI) | `test/c/test_core.c` under ASan + UBSan: costs vs naive formulas, PELT vs Optimal Partitioning, Dynp vs exhaustive search, valid segmentations |
+| Concurrency (core) | `make test_threads` | yes (CI) | `test/c/test_threads.c` under ThreadSanitizer: 8 threads run every algorithm on series from one shared buffer and match a single-threaded reference |
 | ruptures cross-check | `make compare_ruptures` | manual | 200 random series: PELT (l2, l1), Binseg (pen, n_bkps), Dynp |
 | Optimality | `make check_optimality` | manual | PELT vs unpruned O(n²) Optimal Partitioning, all costs, min_size 1–5, value penalties and MBIC |
 | Leaks (dynamic) | `make leak_check` | manual (macOS) | every SQL function incl. error paths, and the core tests, under `leaks --atExit` |
@@ -22,6 +23,7 @@
 | `cpt_crops.test` | sweep covers PELT, ordering, reproducibility, min_size |
 | `cpt_segment_stats.test` | statistics, README examples for labelling rows |
 | `cpt_limits.test` | `cpt_max_evaluations`: default, error messages per function, l1 weighting, 0 = no limit, RESET |
+| `cpt_threads.test` | 1,000,000 series in 9 row groups: every function and cost on 8 threads gives the same result as on 1 thread |
 | `cpt_talk_examples.test` | the examples in docs/examples-from-talks.md (FOCuS Figure 1, detection delay, Hunter-style benchmark and latency) |
 
 The synthetic series are generated in SQL right after `SELECT setseed(0.42)`. They are smaller than
@@ -38,6 +40,24 @@ them out of this repository keeps it MIT-only. That repository's `make test` run
 `test/sql/cpt_reference.test` against a cpt build (by default `../duck-changepoint/build/release/`)
 and summarises what it checks: exact matches on Nile and Lai2005fig4, and on wave.c44137 and ftse100
 a penalised cost no higher than changepoint's (whose pruning ignores minseglen).
+
+## Concurrency
+
+DuckDB runs the `cpt_*` calls for different rows on different threads, and they all read from the same
+input vector. The code is safe because it has no mutable global or static state: every call allocates
+its own workspace and cost index, and the input and the bind data are only read. Two tests guard that:
+
+- **`cpt_threads.test` (SQL).** DuckDB parallelises a table scan by row group (122,880 rows), so the
+  small tables elsewhere run on one thread. This test uses 1,000,000 short series (9 row groups) and
+  runs `cpt_pelt` (l2, l1, normal), `cpt_binseg`, `cpt_crops` and `cpt_segment_stats` with
+  `SET threads = 1` and `SET threads = 8`. Every row must be identical. With 8 threads the query is
+  about 7× faster on an 8-core laptop, which confirms the calls really run concurrently.
+- **`make test_threads` (ThreadSanitizer).** A C program runs every algorithm and cost on 48 series from
+  one shared buffer, with a single-threaded reference first, then 8 pthreads that each process all
+  series, starting at different offsets so several threads work on the same series at once (6,912
+  runs). ThreadSanitizer reports any data race. To confirm the check works, a race was planted once
+  (a global counter incremented in `l2_eval`): TSan reported it with the stack `l2_eval` → `cpt_pelt`
+  and the run failed. Running DuckDB itself under TSan would need a TSan build of DuckDB.
 
 ## Memory leaks
 

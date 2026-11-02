@@ -23,6 +23,7 @@ jobs:
         with:
           submodules: recursive   # the Makefile includes extension-ci-tools makefiles
       - run: make test_core
+      - run: make test_threads
 
   compat:
     name: SQL tests on DuckDB 1.5.6

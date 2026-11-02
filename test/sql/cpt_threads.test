@@ -1,0 +1,54 @@
+# name: test/sql/cpt_threads.test
+# description: cpt functions running on many threads at once give the same results as on one thread
+# group: [cpt]
+
+require cpt
+
+# DuckDB parallelises a table scan by row group (122,880 rows). One million short series fill 9 row
+# groups, so with 8 threads the cpt_* calls really run concurrently (about 7x faster than 1 thread on
+# an 8-core laptop). Every function and cost is included; l1 builds a wavelet index per call, crops runs
+# PELT several times, segment_stats writes nested structs.
+statement ok
+CREATE TABLE many AS
+SELECT g, list_transform(range(12), lambda j: CASE WHEN g % 2 = 0 AND j >= 6 THEN 3.0 ELSE 0.0 END
+                                             + 0.3 * sin(g * 7.1 + j * 1.7)) AS xs
+FROM range(1000000) t(g);
+
+query I
+SELECT count(DISTINCT row_group_id) >= 8 FROM pragma_storage_info('many')
+----
+true
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE r1 AS
+SELECT g, cpt_pelt(xs, 'l2') AS p, cpt_pelt(xs, 'l1', 2.0) AS l1, cpt_binseg(xs, 'l2', 2) AS b,
+       cpt_crops(xs, 'l2', 0.5, 50) AS c, cpt_segment_stats(xs, cpt_pelt(xs, 'normal')) AS st
+FROM many;
+
+statement ok
+SET threads = 8;
+
+statement ok
+CREATE TABLE r8 AS
+SELECT g, cpt_pelt(xs, 'l2') AS p, cpt_pelt(xs, 'l1', 2.0) AS l1, cpt_binseg(xs, 'l2', 2) AS b,
+       cpt_crops(xs, 'l2', 0.5, 50) AS c, cpt_segment_stats(xs, cpt_pelt(xs, 'normal')) AS st
+FROM many;
+
+# every row, every function: identical on 1 and 8 threads
+query II
+SELECT count(*), count(*) FILTER (WHERE r1.p IS DISTINCT FROM r8.p OR r1.l1 IS DISTINCT FROM r8.l1
+                                     OR r1.b IS DISTINCT FROM r8.b OR r1.c IS DISTINCT FROM r8.c
+                                     OR r1.st IS DISTINCT FROM r8.st)
+FROM r1 JOIN r8 USING (g)
+----
+1000000	0
+
+# and correct: even series step up by 3 after 6 points, odd series do not change
+query III
+SELECT g % 2, p, count(*) FROM r8 GROUP BY ALL ORDER BY ALL
+----
+0	[6, 12]	500000
+1	[12]	500000

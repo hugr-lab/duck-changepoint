@@ -1,4 +1,4 @@
-.PHONY: clean clean_all bench compare_ruptures check_optimality test_compat test_core leak_check joern_leaks help
+.PHONY: clean clean_all bench compare_ruptures check_optimality test_compat test_core test_threads leak_check joern_leaks help
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -56,6 +56,15 @@ test_core:
 		-Wall -Wextra -Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c src/core/algo.c -lm -o $(CORE_TEST_BIN)
 	$(CORE_TEST_BIN)
 
+# Concurrency test of src/core under ThreadSanitizer: 8 threads run every algorithm on series from one
+# shared buffer and compare with a single-threaded reference (no DuckDB needed).
+THREADS_TEST_BIN := build/test_threads
+test_threads:
+	@mkdir -p build
+	$(CC) -std=c11 -g -O1 -fsanitize=thread -fno-omit-frame-pointer -Wall -Wextra -pthread \
+		-Isrc/include test/c/test_threads.c src/core/cost.c src/core/cost_l1.c src/core/algo.c -lm -o $(THREADS_TEST_BIN)
+	TSAN_OPTIONS=halt_on_error=1 $(THREADS_TEST_BIN)
+
 # Leak checks (manual). Dynamic: a host program links libduckdb, loads the debug extension and runs
 # every function incl. error paths under macOS `leaks --atExit` (exit 1 on any leak); the core tests
 # run under `leaks` too (ASan hides allocations from it). Needs libduckdb: brew install duckdb.
@@ -94,6 +103,7 @@ help:
 	@echo "make test_release     - SQL logic tests against the release build"
 	@echo "make test_compat      - SQL logic tests on DuckDB $(COMPAT_DUCKDB_VERSION) (oldest supported)"
 	@echo "make test_core        - C tests of src/core under ASan/UBSan (no DuckDB needed)"
+	@echo "make test_threads     - 8 threads on shared series under ThreadSanitizer (no DuckDB needed)"
 	@echo "make compare_ruptures - cross-check against ruptures (manual, not CI gating)"
 	@echo "make check_optimality - PELT vs unpruned Optimal Partitioning (manual, not CI gating)"
 	@echo "make leak_check       - every SQL function and the core under macOS leaks (needs brew duckdb)"

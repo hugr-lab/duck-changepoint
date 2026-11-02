@@ -25,6 +25,7 @@ make configure && make release      # build/release/cpt.duckdb_extension
 make test_release                   # SQL tests, latest DuckDB
 make test_compat                    # SQL tests, DuckDB 1.5.6
 make test_core                      # C core tests under ASan/UBSan
+make test_threads                   # core on 8 threads under ThreadSanitizer
 make compare_ruptures check_optimality bench   # manual checks
 make leak_check joern_leaks         # leak checks (macOS leaks + Joern); run after touching allocation code
 ```
@@ -44,6 +45,8 @@ Use `rtk` as a command prefix in this environment (see the user's global instruc
 - DuckDB 2.0 rejects `x -> ...` lambdas by default. Use `lambda x: ...` in tests and docs.
 - `generate_series` has no DOUBLE overload; build penalty grids from `range()`.
 - The sqllogictest runner stops at the first failing file.
+- No mutable global or static state in src/: calls run concurrently on DuckDB's threads
+  (`make test_threads`, `test/sql/cpt_threads.test`).
 - A C API scalar function cannot be interrupted: new loops must charge `cpt_budget` (see algo.c)
   so `cpt_max_evaluations` keeps bounding run time.
 - With no git commits, set `EXTENSION_VERSION` or the metadata footer is corrupt.

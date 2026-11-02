@@ -299,6 +299,7 @@ make release          # build/release/cpt.duckdb_extension
 make test             # SQL logic tests (debug build) on the latest DuckDB
 make test_compat      # same tests on DuckDB 1.5.6
 make test_core        # C tests of the numerical core under ASan/UBSan
+make test_threads     # the core on 8 threads under ThreadSanitizer
 ```
 
 These checks are run by hand and do not gate CI:
