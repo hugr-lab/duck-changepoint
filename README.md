@@ -26,7 +26,7 @@ SELECT cpt_pelt(list(value ORDER BY ts), 'l2') AS bkps FROM readings;
 - [Talks](#talks)
 - [References](#references)
 
-Further documentation: [docs/architecture.md](docs/architecture.md), [docs/algorithms.md](docs/algorithms.md),
+Further documentation: [docs/examples-from-talks.md](docs/examples-from-talks.md), [docs/architecture.md](docs/architecture.md), [docs/algorithms.md](docs/algorithms.md),
 [docs/costs-and-penalties.md](docs/costs-and-penalties.md), [docs/TESTING.md](docs/TESTING.md),
 [DEVELOPMENT.md](DEVELOPMENT.md).
 
@@ -303,6 +303,8 @@ the algorithms are implemented from the published papers, and the changepoint-de
 kept in `duck-changepoint-reference` (GPL-2.0-or-later).
 
 ## Talks
+
+The examples from both talks are rebuilt in SQL in [docs/examples-from-talks.md](docs/examples-from-talks.md).
 
 - **Paul Fearnhead, "Fast Online Changepoint Detection via Functional Pruning CUSUM Statistics"**
   ([recording](https://media.ed.ac.uk/media/Fast+Online+Changepoint+Detection+via+Functional+Pruning+CUSUM+Statistics+-+Paul+Fearnhead/1_w941egwk),

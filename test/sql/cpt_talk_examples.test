@@ -1,0 +1,127 @@
+# name: test/sql/cpt_talk_examples.test
+# description: examples rebuilt from the talks in the README (docs/examples-from-talks.md)
+# group: [cpt]
+
+require cpt
+
+# Deterministic noise on every DuckDB version and thread count: sin()-based uniforms, Box-Muller.
+statement ok
+CREATE MACRO u(i, k) AS (abs(sin((i + 1) * 12.9898 + k * 78.233) * 43758.5453) % 1.0) * 0.999998 + 0.000001;
+
+statement ok
+CREATE MACRO z(i, k) AS sqrt(-2 * ln(u(i, k))) * cos(2 * pi() * u(i, k + 1));
+
+# Noise sd estimated from first differences: MAD(diff) * 1.4826 / sqrt(2) (robust to the changes)
+statement ok
+CREATE MACRO noise_sd(xs) AS (
+    SELECT mad(dx) * 1.4826 / sqrt(2)
+    FROM (SELECT unnest(list_transform(range(2, len(xs) + 1), lambda k: xs[k] - xs[k - 1])) AS dx)
+);
+
+# === Fearnhead / FOCuS, Figure 1: N(0, 1), change of size 1 or 0.2 =============================
+
+statement ok
+CREATE TABLE f1a AS SELECT list(CASE WHEN i >= 1000 THEN 1.0 ELSE 0 END + z(i, 1) ORDER BY i) AS xs FROM range(2000) t(i);
+
+statement ok
+CREATE TABLE f1b AS SELECT list(CASE WHEN i >= 1000 THEN 0.2 ELSE 0 END + z(i, 1) ORDER BY i) AS xs FROM range(2000) t(i);
+
+statement ok
+CREATE TABLE f1c AS SELECT list(CASE WHEN i >= 9000 THEN 1.0 ELSE 0 END + z(i, 1) ORDER BY i) AS xs FROM range(10000) t(i);
+
+# offline, with the whole series available, all three changes are found
+query III
+SELECT (SELECT cpt_pelt(xs, 'l2') FROM f1a), (SELECT cpt_pelt(xs, 'l2') FROM f1b), (SELECT cpt_pelt(xs, 'l2') FROM f1c)
+----
+[1000, 2000]	[1016, 2000]	[9000, 10000]
+
+# the 0.2 change survives only a narrow penalty range: CROPS over [5, 60]
+query I
+SELECT list_transform(list_filter(cpt_crops(xs, 'l2', 5, 60), lambda e: e.n_bkps <= 2), lambda e: e.bkps) FROM f1b
+----
+[[1016, 1022, 2000], [1016, 2000], [2000]]
+
+# "detection delay" offline: rerun PELT on every prefix 1..t; first alarm and the point from which
+# the change stays detected (a change point within 50 of the truth)
+query III
+WITH d AS (
+    SELECT name, t, len(b) > 1 AND list_bool_or(list_transform(b[1:-2], lambda e: abs(e - 1000) <= 50)) AS hit
+    FROM (SELECT 'size 1' AS name, xs FROM f1a UNION ALL SELECT 'size 0.2', xs FROM f1b),
+         range(1001, 2001) r(t), LATERAL (SELECT cpt_pelt(xs[1:t], 'l2') AS b)
+)
+SELECT name, min(t) FILTER (WHERE hit) - 1000, coalesce(max(t) FILTER (WHERE NOT hit), 1000) + 1 - 1000
+FROM d GROUP BY name ORDER BY name DESC
+----
+size 1	17	17
+size 0.2	22	317
+
+# === Fleming / Hunter: daily benchmark, 175 days (as db-gatling.csv: 175 entries, 15 months) =====
+# 10,000 ops/s with 3% noise; an 8% regression on days 60-70 that is reverted, a 10% improvement
+# from day 120, and a 2% step from day 150.
+
+statement ok
+CREATE TABLE bench AS
+SELECT list(10000 * (CASE WHEN d BETWEEN 60 AND 70 THEN 0.92 WHEN d >= 150 THEN 1.10 * 1.02 WHEN d >= 120 THEN 1.10 ELSE 1.0 END)
+            * (1 + 0.03 * z(d, 11)) ORDER BY d) AS xs
+FROM range(175) t(d);
+
+# a day-over-day 5% threshold raises 56 alarms
+query I
+SELECT count(*) FILTER (WHERE abs(xs[k] / xs[k - 1] - 1) > 0.05) FROM bench, range(2, 176) r(k)
+----
+56
+
+# BIC on raw ops/s assumes unit noise (sd 1 op/s): 174 segments for 175 days
+query I
+SELECT len(cpt_pelt(xs, 'l2')) FROM bench
+----
+174
+
+# scaled by the estimated noise sd: the regression, its revert, the improvement and the 2% step
+query II
+WITH s AS (SELECT xs, noise_sd(xs) AS sd FROM bench)
+SELECT round(sd), cpt_pelt(list_transform(xs, lambda x: x / sd), 'l2') FROM s
+----
+380.0	[60, 71, 120, 149, 175]
+
+# greedy binary segmentation misses the short reverted regression
+query I
+WITH s AS (SELECT xs, noise_sd(xs) AS sd FROM bench)
+SELECT cpt_binseg(list_transform(xs, lambda x: x / sd), 'l2') FROM s
+----
+[120, 149, 175]
+
+# Hunter's filter: drop change points whose relative change in mean is below 5%
+query I
+WITH n AS (SELECT xs, noise_sd(xs) AS sd FROM bench),
+s AS (SELECT xs, cpt_segment_stats(xs, cpt_pelt(list_transform(xs, lambda x: x / sd), 'l2')) AS segs FROM n)
+SELECT list_append(
+    list_transform(list_filter(range(1, len(segs)), lambda k: abs(segs[k + 1].mean / segs[k].mean - 1) >= 0.05),
+                   lambda k: segs[k]."end"),
+    len(xs))
+FROM s
+----
+[60, 71, 120, 175]
+
+# === Fleming / Hunter: p99 latency per second, change in mean / variance / both ==================
+
+statement ok
+CREATE TABLE latency AS
+SELECT scenario, list(v ORDER BY i) AS xs FROM (
+    SELECT 'mean' AS scenario, i, CASE WHEN i >= 300 THEN 30 ELSE 20 END + 2 * z(i, 21) AS v FROM range(600) t(i)
+    UNION ALL
+    SELECT 'variance', i, 20 + CASE WHEN i >= 300 THEN 6 ELSE 2 END * z(i, 21) FROM range(600) t(i)
+    UNION ALL
+    SELECT 'both', i, CASE WHEN i >= 200 THEN 25 ELSE 20 END + CASE WHEN i >= 400 THEN 6 ELSE 2 END * z(i, 21)
+    FROM range(600) t(i)
+) GROUP BY scenario;
+
+# 'normal' (mean and variance) recovers every scenario exactly; l2 (scaled by the pre-change sd 2)
+# only the mean change
+query III
+SELECT scenario, cpt_pelt(xs, 'normal'), len(cpt_pelt(list_transform(xs, lambda x: x / 2), 'l2'))
+FROM latency ORDER BY scenario
+----
+both	[200, 400, 600]	55
+mean	[300, 600]	2
+variance	[300, 600]	80

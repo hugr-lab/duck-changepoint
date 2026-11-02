@@ -21,6 +21,7 @@
 | `cpt_binseg_dynp.test` | binseg = dynp = truth on separable series; stopping rules; dynp ≤ binseg cost |
 | `cpt_crops.test` | sweep covers PELT, ordering, reproducibility, min_size |
 | `cpt_segment_stats.test` | statistics, README examples for labelling rows |
+| `cpt_talk_examples.test` | the examples in docs/examples-from-talks.md (FOCuS Figure 1, detection delay, Hunter-style benchmark and latency) |
 
 The synthetic series are generated in SQL right after `SELECT setseed(0.42)`. They are smaller than
 one vector, so a single thread generates them, and DuckDB 1.5.6 and 2.0 produce the same values.
