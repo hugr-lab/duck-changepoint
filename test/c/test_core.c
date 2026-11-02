@@ -6,6 +6,7 @@
 //   - PELT equals unpruned Optimal Partitioning (all costs, min_size 1..6, value penalty and MBIC)
 //   - Dynp equals an exhaustive search for small n
 //   - every algorithm returns valid segmentations (increasing, ends at n, segments >= min_size)
+//   - n_bkps and min_size at the int64 limit neither overflow nor crash
 
 #include "algo.h"
 #include "cost.h"
@@ -162,6 +163,32 @@ static double exhaustive(const cpt_cost *cost, int64_t start, int64_t n, int64_t
 	return best;
 }
 
+// Arguments at the int64 limit must neither overflow nor crash.
+static int test_extreme_arguments(void) {
+	double x[8] = {0, 0, 0, 0, 9, 9, 9, 9};
+	char err[CPT_ERR_LEN];
+	int checks = 0;
+	cpt_cost cost;
+	if (cpt_cost_create(CPT_COST_L2, x, 8, &cost, err)) {
+		CHECK(0, "extreme: create failed: %s", err);
+		return checks;
+	}
+	cpt_bkps b;
+	CHECK(cpt_dynp(&cost, 8, INT64_MAX, 1, NULL, &b, err) != 0, "dynp accepted n_bkps = INT64_MAX");
+	checks++;
+	cpt_penalty pen = {1.0, 0};
+	CHECK(cpt_pelt(&cost, 8, pen, INT64_MAX, NULL, &b, err) == 0 && b.count == 1 && b.pos[0] == 8,
+	      "pelt with min_size = INT64_MAX: %s", err);
+	cpt_bkps_free(&b);
+	checks++;
+	CHECK(cpt_binseg(&cost, 8, -1, 1.0, INT64_MAX, NULL, &b, err) == 0 && b.count == 1 && b.pos[0] == 8,
+	      "binseg with min_size = INT64_MAX: %s", err);
+	cpt_bkps_free(&b);
+	checks++;
+	cpt_cost_destroy(&cost);
+	return checks;
+}
+
 int main(void) {
 	const char *names[] = {"l2", "normal", "poisson", "l1"};
 	char err[CPT_ERR_LEN];
@@ -233,6 +260,7 @@ int main(void) {
 		cpt_cost_destroy(&cost);
 		free(x);
 	}
+	checks += test_extreme_arguments();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
 }
