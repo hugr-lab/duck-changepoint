@@ -1,5 +1,6 @@
 #
-# Numerical core under ASan/UBSan, and the SQL tests on the oldest supported DuckDB (1.5.6).
+# Numerical core under ASan/UBSan, SQL tests on the oldest supported DuckDB (1.5.6), and leak_check
+# (every SQL function and the core under macOS `leaks`).
 #
 name: Core and compatibility tests
 on:
@@ -35,3 +36,26 @@ jobs:
           python-version: "3.12"
       - run: make configure
       - run: make test_compat
+
+  leaks:
+    name: leak_check (macOS leaks)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install libduckdb
+        run: brew install duckdb
+      - run: make configure
+      - run: make leak_check
+      - name: Upload leaks reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaks-reports
+          path: build/leaks_*.txt
+          if-no-files-found: ignore
