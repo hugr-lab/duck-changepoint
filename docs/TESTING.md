@@ -2,12 +2,13 @@
 
 | Layer | Command | Gating | What it checks |
 |---|---|---|---|
-| SQL logic tests | `make test` (debug), `make test_release` | yes | `test/sql/*.test`: results, errors, NULL/empty handling, overloads, GROUP BY, reference data |
+| SQL logic tests | `make test` (debug), `make test_release` | yes | `test/sql/*.test`: results, errors, NULL/empty handling, overloads, GROUP BY, synthetic series |
 | Oldest DuckDB | `make test_compat` | recommended before release | the same SQL tests with DuckDB 1.5.6 |
 | Core C tests | `make test_core` | yes (CI) | `test/c/test_core.c` under ASan + UBSan: costs vs naive formulas, PELT vs Optimal Partitioning, Dynp vs exhaustive search, valid segmentations |
 | ruptures cross-check | `make compare_ruptures` | manual | 200 random series: PELT (l2, l1), Binseg (pen, n_bkps), Dynp |
 | Optimality | `make check_optimality` | manual | PELT vs unpruned O(n²) Optimal Partitioning, all costs, min_size 1–5, value penalties and MBIC |
 | Benchmark | `make bench` | manual | l2 PELT at n = 1e4, 1e5, 1e6 |
+| R changepoint | `make test` in `duck-changepoint-reference` | manual | Nile, Lai2005fig4, wave.c44137, ftse100 |
 
 ## SQL tests (`test/sql/`)
 
@@ -18,7 +19,6 @@
 | `cpt_binseg_dynp.test` | binseg = dynp = truth on separable series; stopping rules; dynp ≤ binseg cost |
 | `cpt_crops.test` | sweep covers PELT, ordering, reproducibility, min_size |
 | `cpt_segment_stats.test` | statistics, README examples for labelling rows |
-| `cpt_reference.test` | Nile, Lai2005fig4, wave.c44137 and ftse100 against R changepoint |
 
 The synthetic series are generated in SQL right after `SELECT setseed(0.42)`. They are smaller than
 one vector, so a single thread generates them, and DuckDB 1.5.6 and 2.0 produce the same values.
@@ -26,20 +26,14 @@ one vector, so a single thread generates them, and DuckDB 1.5.6 and 2.0 produce 
 Results are in the 1-based convention. Expected values were checked by reasoning about the costs,
 recorded in the comments next to the less obvious ones, and not copied from the output.
 
-## Reference data (`test/data/`)
+## Reference data against R changepoint
 
-`tools/export_reference.R` writes the CSV files and `expected_*.json`, which hold changepoint's call,
-penalty value, `cpts` and `bkps`. Re-run it with `make reference-data` (rocker/r-ver in Apple container
-or Docker). The committed files come from changepoint 2.3 on R 4.4.2.
-
-- **Nile.** `cpt.mean` on the series scaled by its sd gives `[28, 100]` for BIC and MBIC.
-  `cpt.meanvar` gives BIC `[4, 6, 28, 97, 100]` and MBIC `[4, 6, 28, 100]`. All match exactly.
-- **Lai2005fig4.** Column 5 is GBM29 (the vignette's column; the data has no GBM31). BIC and MBIC
-  both give `[81, 85, 89, 96, 123, 133, 193]`, and both match.
-- **wave.c44137, ftse100** (`cpt.meanvar`). changepoint's answers are not optimal: it prunes without
-  regard to minseglen = 2. The test checks that cpt's penalised cost, computed in SQL from
-  `cpt_segment_stats`, is ≤ changepoint's, and that at least 80% of changepoint's change points
-  appear in cpt's answer.
+The datasets and expected results from R's changepoint package live in the companion repository
+`duck-changepoint-reference`. Three of the datasets ship with changepoint under the GPL, and keeping
+them out of this repository keeps it MIT-only. That repository's `make test` runs
+`test/sql/cpt_reference.test` against a cpt build (by default `../duck-changepoint/build/release/`)
+and summarises what it checks: exact matches on Nile and Lai2005fig4, and on wave.c44137 and ftse100
+a penalised cost no higher than changepoint's (whose pruning ignores minseglen).
 
 ## Running a single test file
 

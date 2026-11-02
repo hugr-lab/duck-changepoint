@@ -35,7 +35,8 @@ Use `rtk` as a command prefix in this environment (see the user's global instruc
 - `src/core/cost.c`, `cost_l1.c`, `algo.c`: the numerics.
 - `src/functions/*.c`: one file per SQL function, helpers in `list_io.c`.
 - `docs/`: architecture, algorithms, cost/penalty derivations, testing.
-- `test/data/expected_*.json`: from R changepoint via `make reference-data`. Do not hand-edit.
+- Reference data from R changepoint (GPL) lives in the separate `duck-changepoint-reference` repo.
+  Do not add GPL code or data here; this repository is MIT.
 
 ## Gotchas
 

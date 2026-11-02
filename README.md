@@ -22,6 +22,7 @@ SELECT cpt_pelt(list(value ORDER BY ts), 'l2') AS bkps FROM readings;
 - [Differences from ruptures and changepoint](#differences-from-ruptures-and-changepoint)
 - [Performance](#performance)
 - [Building and testing](#building-and-testing)
+- [License](#license)
 - [References](#references)
 
 Further documentation: [docs/architecture.md](docs/architecture.md), [docs/algorithms.md](docs/algorithms.md),
@@ -226,7 +227,8 @@ before a later t′, and with a minimum segment length m that option only exists
 and changepoint drop s immediately and can lose the optimum when m > 1. cpt keeps such candidates
 until t + m. On the `wave.c44137` and `ftse100` reference series, changepoint's
 `cpt.meanvar(method = "PELT")` returns segmentations with a higher penalised cost than unpruned
-Optimal Partitioning finds, while cpt matches it. `test/sql/cpt_reference.test` checks this.
+Optimal Partitioning finds, while cpt matches it. The companion repository
+[duck-changepoint-reference](#reference-data-against-r-changepoint) checks this.
 
 **Matching ruptures.** Use `Pelt(model="l2", min_size=m, jump=1).fit(x).predict(pen=β)` against
 `cpt_pelt(x, 'l2', β, m)`. `test/python/compare_ruptures.py` does this over random series (PELT `l2`
@@ -235,7 +237,8 @@ answers have the same cost to the last digit.
 
 **Matching changepoint.** `cpt.mean(x, method = "PELT", penalty = "BIC")` corresponds to
 `cpt_pelt(x, 'l2', 'bic')` (scale x to unit variance first), and `cpt.meanvar` corresponds to
-`'normal'`. On Nile and Lai2005fig4 the results are identical.
+`'normal'`. On Nile and Lai2005fig4 the results are identical (see
+[Reference data against R changepoint](#reference-data-against-r-changepoint)).
 
 ## Performance
 
@@ -272,10 +275,29 @@ These checks are run by hand and do not gate CI:
 make compare_ruptures   # 200 random series against ruptures
 make check_optimality   # PELT against unpruned Optimal Partitioning
 make bench              # timings above
-make reference-data     # regenerate test/data from R changepoint in a container
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) and [docs/TESTING.md](docs/TESTING.md).
+
+### Reference data against R changepoint
+
+The comparison with R's changepoint package on Nile, Lai2005fig4, wave.c44137 and ftse100 lives in a
+separate repository, `duck-changepoint-reference`, because three of those datasets are distributed with
+changepoint under the GPL. With both repositories checked out side by side:
+
+```sh
+cd ../duck-changepoint-reference
+make test                         # against ../duck-changepoint/build/release/cpt.duckdb_extension
+make test DUCKDB_VERSION=1.5.6
+make reference-data               # regenerate the data with R changepoint in a container
+```
+
+## License
+
+MIT, see [LICENSE](LICENSE). The bundled DuckDB C API headers in `duckdb_capi/` are MIT-licensed by the
+DuckDB Foundation ([LICENSES/](LICENSES/README.md)). This repository contains no GPL code or data:
+the algorithms are implemented from the published papers, and the changepoint-derived reference data is
+kept in `duck-changepoint-reference` (GPL-2.0-or-later).
 
 ## References
 

@@ -41,7 +41,8 @@ See [docs/TESTING.md](docs/TESTING.md). Before a commit:
 make release test_release test_core
 ```
 
-Before a release, also run `make test_compat compare_ruptures check_optimality bench`.
+Before a release, also run `make test_compat compare_ruptures check_optimality bench`, and
+`make test` in the companion `duck-changepoint-reference` repository (R changepoint comparison).
 
 ## Code conventions
 
@@ -62,8 +63,6 @@ src/            extension sources (core/, functions/, include/)
 test/sql/       SQLLogicTests (gating)
 test/c/         standalone C tests with sanitizers
 test/python/    manual cross-checks (ruptures, optimality)
-test/data/      reference datasets + expected results from R
-tools/          export_reference.R
 bench/          bench.sql + runner
 docs/           architecture, algorithms, costs and penalties, testing
 ```
