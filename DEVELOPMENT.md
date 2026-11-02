@@ -41,7 +41,8 @@ See [docs/TESTING.md](docs/TESTING.md). Before a commit:
 make release test_release test_core
 ```
 
-Before a release, also run `make test_compat compare_ruptures check_optimality bench`, and
+Before a release, also run `make test_compat compare_ruptures check_optimality bench leak_check
+joern_leaks`, and
 `make test` in the companion `duck-changepoint-reference` repository (R changepoint comparison).
 
 ## Code conventions

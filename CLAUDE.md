@@ -26,6 +26,7 @@ make test_release                   # SQL tests, latest DuckDB
 make test_compat                    # SQL tests, DuckDB 1.5.6
 make test_core                      # C core tests under ASan/UBSan
 make compare_ruptures check_optimality bench   # manual checks
+make leak_check joern_leaks         # leak checks (macOS leaks + Joern); run after touching allocation code
 ```
 
 Use `rtk` as a command prefix in this environment (see the user's global instructions).

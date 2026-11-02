@@ -23,6 +23,7 @@ SELECT cpt_pelt(list(value ORDER BY ts), 'l2') AS bkps FROM readings;
 - [Performance](#performance)
 - [Building and testing](#building-and-testing)
 - [License](#license)
+- [Talks](#talks)
 - [References](#references)
 
 Further documentation: [docs/architecture.md](docs/architecture.md), [docs/algorithms.md](docs/algorithms.md),
@@ -275,6 +276,8 @@ These checks are run by hand and do not gate CI:
 make compare_ruptures   # 200 random series against ruptures
 make check_optimality   # PELT against unpruned Optimal Partitioning
 make bench              # timings above
+make leak_check         # every function under macOS `leaks` (needs `brew install duckdb`)
+make joern_leaks        # static allocation/release audit with Joern
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) and [docs/TESTING.md](docs/TESTING.md).
@@ -298,6 +301,22 @@ MIT, see [LICENSE](LICENSE). The bundled DuckDB C API headers in `duckdb_capi/` 
 DuckDB Foundation ([LICENSES/](LICENSES/README.md)). This repository contains no GPL code or data:
 the algorithms are implemented from the published papers, and the changepoint-derived reference data is
 kept in `duck-changepoint-reference` (GPL-2.0-or-later).
+
+## Talks
+
+- **Paul Fearnhead, "Fast Online Changepoint Detection via Functional Pruning CUSUM Statistics"**
+  ([recording](https://media.ed.ac.uk/media/Fast+Online+Changepoint+Detection+via+Functional+Pruning+CUSUM+Statistics+-+Paul+Fearnhead/1_w941egwk),
+  University of Edinburgh Media Hopper, ICMS workshop "Structural Breaks and Shape Constraints",
+  May 2022).
+  One of PELT's authors on functional pruning, the idea behind FPOP and the online detector FOCuS
+  ([JMLR 2023](https://www.jmlr.org/beta/papers/v24/21-1230.html)). cpt implements PELT's
+  inequality-based pruning, not functional pruning; the talk shows where the field went next.
+- **Matt Fleming, "Using Change Point Detection to Fight Noisy Benchmark Results"**
+  ([session page](https://www.p99conf.io/session/using-change-point-detection-to-fight-noisy-benchmark-results/),
+  P99 CONF, 16 min, free registration required to watch;
+  [slides](https://www.slideshare.net/slideshow/using-change-point-detection-to-fight-noisy-benchmark-results-by-matt-fleming/272474341)).
+  Change point detection on noisy performance data in practice, with the open-source tools Hunter
+  and Nyrkiö ([Hunter paper](https://arxiv.org/abs/2301.03034)).
 
 ## References
 
