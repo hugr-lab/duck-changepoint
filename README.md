@@ -273,6 +273,15 @@ stops after about 2–3 s on a laptop with an error that says why. PELT on 200,0
 change would otherwise take about 25 s (l2) or several minutes (l1). The 1e6-point benchmark above uses
 about 3.8 × 10⁸ units. The limit applies to PELT, Binseg, Dynp and to a whole CROPS sweep.
 
+**The limit is per series, not per query.** DuckDB checks for an interrupt only between calls of a
+scalar function, and one call processes a whole vector of up to 2,048 rows (series). A query over many
+series that each stay under the limit therefore cannot be cancelled until the current vector is done:
+32 series of 40,000 points with one change each took 18.8 s, and an interrupt after 1 s returned only
+at the end ([#2](https://github.com/hugr-lab/duck-changepoint/issues/2)). In the worst case that is
+2,048 × the per-series limit. On servers where users send their own SQL, lower the limit accordingly.
+Series in the same vector also run one after another on a single thread. A proper fix needs an
+interrupt check for scalar functions in the DuckDB C API, which does not exist yet.
+
 When the limit is hit, the error message suggests what to do. For long series with few changes,
 `cpt_binseg` (O(n log n)) finds the same change in milliseconds. To raise or remove the limit,
 `SET cpt_max_evaluations`. On a server where users send their own SQL, set it globally

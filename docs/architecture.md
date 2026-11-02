@@ -69,3 +69,5 @@ To add a cost:
   therefore has a bind callback that reads the `cpt_max_evaluations` setting (registered with
   `duckdb_register_config_option`) into bind data. The algorithms count weighted cost evaluations in a
   `cpt_budget`, check it once per outer step, and return `CPT_BUDGET_EXCEEDED` when it runs out.
+  The limit is per series. DuckDB checks for interrupts only between calls, and one call processes a
+  whole vector (up to 2,048 series), so cancelling a query can still take up to 2,048 × the limit (#2).
