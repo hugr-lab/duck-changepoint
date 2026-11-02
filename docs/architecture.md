@@ -63,3 +63,7 @@ To add a cost:
 - **Errors.** `duckdb_scalar_function_set_error` stops the query, with messages prefixed by the
   function or argument name.
 - **Threads.** There is no global state; each call allocates and frees its own workspace.
+- **No interrupt check.** A scalar function cannot see that its query was interrupted. Every overload
+  therefore has a bind callback that reads the `cpt_max_evaluations` setting (registered with
+  `duckdb_register_config_option`) into bind data. The algorithms count weighted cost evaluations in a
+  `cpt_budget`, check it once per outer step, and return `CPT_BUDGET_EXCEEDED` when it runs out.

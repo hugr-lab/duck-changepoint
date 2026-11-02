@@ -54,10 +54,11 @@ static void BinsegFunction(duckdb_function_info info, duckdb_data_chunk input, d
 			pen = cpt_penalty_named(CPT_PEN_BIC, n, cost.n_params).beta;
 		}
 		cpt_bkps bkps;
-		int rc = cpt_binseg(&cost, n, has_n_bkps ? n_bkps : -1, pen, min_size, &bkps, err);
+		cpt_budget budget = cpt_function_budget(info);
+		int rc = cpt_binseg(&cost, n, has_n_bkps ? n_bkps : -1, pen, min_size, &budget, &bkps, err);
 		cpt_cost_destroy(&cost);
 		if (rc) {
-			duckdb_scalar_function_set_error(info, err);
+			cpt_report_error(info, "cpt_binseg", rc, err);
 			return;
 		}
 		rc = cpt_write_int_list(output, row, &offset, bkps.pos, bkps.count, err);

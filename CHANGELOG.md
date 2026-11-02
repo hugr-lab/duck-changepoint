@@ -10,5 +10,7 @@ First release.
 - Penalties `bic`, `mbic` and `aic` with R changepoint's values, or any value ≥ 0.
 - PELT pruning stays exact with `min_size > 1`, where ruptures and changepoint prune heuristically.
 - Stable C API, minimum DuckDB v1.5.6; tested on 1.5.6 and 2.0.0.
+- `cpt_max_evaluations` setting (default 1e9, 0 = no limit) bounds the work of one call, since a
+  running C API scalar function cannot be interrupted.
 - MIT license. The comparison data from R changepoint (GPL) is kept in the separate
   `duck-changepoint-reference` repository.

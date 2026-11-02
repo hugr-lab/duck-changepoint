@@ -77,10 +77,11 @@ static void CropsFunction(duckdb_function_info info, duckdb_data_chunk input, du
 		}
 		cpt_crops_entry *entries;
 		int64_t count;
-		int rc = cpt_crops(&cost, n, pen_min, pen_max, min_size, &entries, &count, err);
+		cpt_budget budget = cpt_function_budget(info);
+		int rc = cpt_crops(&cost, n, pen_min, pen_max, min_size, &budget, &entries, &count, err);
 		cpt_cost_destroy(&cost);
 		if (rc) {
-			duckdb_scalar_function_set_error(info, err);
+			cpt_report_error(info, "cpt_crops", rc, err);
 			return;
 		}
 		rc = write_entries(output, row, &offset, &inner_offset, entries, count, err);

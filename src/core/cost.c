@@ -163,6 +163,7 @@ int cpt_cost_create(cpt_cost_kind kind, const double *x, int64_t n, cpt_cost *ou
 	memset(out, 0, sizeof(*out));
 	out->K = 0;
 	out->min_len = 1;
+	out->eval_weight = 1;
 	switch (kind) {
 	case CPT_COST_L2:
 		out->name = "l2";
@@ -179,6 +180,7 @@ int cpt_cost_create(cpt_cost_kind kind, const double *x, int64_t n, cpt_cost *ou
 		out->eval = normal_eval;
 		out->n_params = 2;
 		out->min_len = 2; // sigma_hat^2 of a single point is 0
+		out->eval_weight = 2; // log() makes an evaluation about twice as expensive as l2
 		out->free = prefix_free;
 		break;
 	case CPT_COST_POISSON:
@@ -199,6 +201,10 @@ int cpt_cost_create(cpt_cost_kind kind, const double *x, int64_t n, cpt_cost *ou
 		out->eval = cpt_cost_l1_eval;
 		out->n_params = 1;
 		out->free = cpt_cost_l1_free;
+		// one O(1) step per wavelet-matrix level
+		while (((int64_t)1 << out->eval_weight) < n) {
+			out->eval_weight++;
+		}
 		break;
 	default:
 		snprintf(err, CPT_ERR_LEN, "unknown cost");

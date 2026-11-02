@@ -1,0 +1,72 @@
+# name: test/sql/cpt_limits.test
+# description: cpt_max_evaluations bounds the work of one call (a running call cannot be interrupted)
+# group: [cpt]
+
+require cpt
+
+query II
+SELECT name, value FROM duckdb_settings() WHERE name = 'cpt_max_evaluations'
+----
+cpt_max_evaluations	1000000000
+
+# one change in 20000 points: PELT prunes almost nothing and needs ~1e8 evaluation units
+statement ok
+CREATE TABLE one_change AS
+SELECT list(CASE WHEN i >= 10000 THEN 1.0 ELSE 0 END + 0.5 * sin(i * 1.7) ORDER BY i) AS xs FROM range(20000) t(i);
+
+query I
+SELECT cpt_pelt(xs, 'l2') FROM one_change
+----
+[10000, 20000]
+
+statement ok
+SET cpt_max_evaluations = 1000000;
+
+statement error
+SELECT cpt_pelt(xs, 'l2') FROM one_change
+----
+cpt_pelt: work limit reached after
+
+statement error
+SELECT cpt_pelt(xs, 'l2') FROM one_change
+----
+SET cpt_max_evaluations (0 = no limit). PELT approaches O(n^2)
+
+statement error
+SELECT cpt_dynp(xs, 1) FROM one_change
+----
+cpt_dynp is O(n_bkps * n^2)
+
+statement error
+SELECT cpt_crops(xs, 'l2', 1, 100) FROM one_change
+----
+cpt_crops: work limit reached
+
+# l1 evaluations count log2(n) units each
+statement error
+SELECT cpt_pelt(xs[1:5000], 'l1') FROM one_change
+----
+cpt_pelt: work limit reached
+
+# binary segmentation stays far below the limit
+query I
+SELECT cpt_binseg(xs, 'l2', 1) FROM one_change
+----
+[10000, 20000]
+
+# 0 disables the limit
+statement ok
+SET cpt_max_evaluations = 0;
+
+query I
+SELECT cpt_pelt(xs, 'l2') FROM one_change
+----
+[10000, 20000]
+
+statement ok
+RESET cpt_max_evaluations;
+
+query I
+SELECT current_setting('cpt_max_evaluations')
+----
+1000000000

@@ -50,6 +50,22 @@ static int bkps_backtrack(const int64_t *prev, int64_t n, cpt_bkps *out, char *e
 	return 0;
 }
 
+// Charge `evals` cost evaluations, weighted by the cost's eval_weight, to the budget. Returns
+// CPT_BUDGET_EXCEEDED (and writes err) once the limit is passed. Called once per outer step, not per
+// evaluation, to keep inner loops tight.
+static int budget_charge(cpt_budget *budget, const cpt_cost *cost, int64_t evals, char *err) {
+	if (!budget) {
+		return 0;
+	}
+	budget->n_evals += evals * cost->eval_weight;
+	if (budget->max_evals > 0 && budget->n_evals > budget->max_evals) {
+		snprintf(err, CPT_ERR_LEN, "work limit reached after %lld evaluation units (limit %lld)",
+		         (long long)budget->n_evals, (long long)budget->max_evals);
+		return CPT_BUDGET_EXCEEDED;
+	}
+	return 0;
+}
+
 static int ascii_ieq(const char *s, size_t len, const char *lit) {
 	if (strlen(lit) != len) {
 		return 0;
@@ -122,7 +138,8 @@ double cpt_segmentation_cost(const cpt_cost *cost, const cpt_bkps *bkps) {
 // PELT
 //===--------------------------------------------------------------------===//
 
-int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size, cpt_bkps *out, char *err) {
+int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size, cpt_budget *budget,
+             cpt_bkps *out, char *err) {
 	out->pos = NULL;
 	out->count = 0;
 	int64_t m = cpt_effective_min_size(cost, min_size);
@@ -157,6 +174,7 @@ int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size,
 		prev[t] = 0;
 	}
 	int64_t n_r = 0;
+	int rc = 0;
 	for (int64_t t = m; t <= n; t++) {
 		// t - m is the newest admissible last change; earlier candidates are already in R.
 		int64_t s_new = t - m;
@@ -185,6 +203,9 @@ int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size,
 		}
 		F[t] = best;
 		prev[t] = arg;
+		if ((rc = budget_charge(budget, cost, n_r, err)) != 0) {
+			break;
+		}
 		// Pruning (Killick et al. 2012, Theorem 3.1): if F[s] + C(s,t) + K > F[t], then for every
 		// t' at which t can be the last change, F[t] + C(t,t') beats F[s] + C(s,t'). With a minimum
 		// segment length that holds only for t' >= t + m, so s stays a candidate until then. Pruning
@@ -207,7 +228,9 @@ int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size,
 		n_r = keep;
 	}
 
-	int rc = bkps_backtrack(prev, n, out, err);
+	if (rc == 0) {
+		rc = bkps_backtrack(prev, n, out, err);
+	}
 	free(F);
 	free(prev);
 	free(R);
@@ -226,11 +249,11 @@ typedef struct {
 	double gain;
 } binseg_segment;
 
-static void binseg_best_split(const cpt_cost *cost, int64_t m, binseg_segment *seg) {
+static int binseg_best_split(const cpt_cost *cost, int64_t m, binseg_segment *seg, cpt_budget *budget, char *err) {
 	seg->split = -1;
 	seg->gain = -INFINITY;
 	if (seg->b - seg->a < 2 * m) {
-		return;
+		return 0;
 	}
 	double whole = cost->eval(cost->ctx, seg->a, seg->b);
 	double best = INFINITY;
@@ -242,10 +265,11 @@ static void binseg_best_split(const cpt_cost *cost, int64_t m, binseg_segment *s
 		}
 	}
 	seg->gain = whole - best;
+	return budget_charge(budget, cost, 1 + 2 * (seg->b - seg->a - 2 * m + 1), err);
 }
 
-int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int64_t min_size, cpt_bkps *out,
-               char *err) {
+int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int64_t min_size, cpt_budget *budget,
+               cpt_bkps *out, char *err) {
 	out->pos = NULL;
 	out->count = 0;
 	int64_t m = cpt_effective_min_size(cost, min_size);
@@ -262,9 +286,9 @@ int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int6
 	int64_t n_segs = 1;
 	segs[0].a = 0;
 	segs[0].b = n;
-	binseg_best_split(cost, m, &segs[0]);
+	int rc = binseg_best_split(cost, m, &segs[0], budget, err);
 
-	for (;;) {
+	while (rc == 0) {
 		int64_t best = -1;
 		for (int64_t i = 0; i < n_segs; i++) {
 			if (segs[i].split >= 0 && (best < 0 || segs[i].gain > segs[best].gain)) {
@@ -286,9 +310,15 @@ int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int6
 		segs[best + 1].a = s;
 		segs[best + 1].b = segs[best].b;
 		segs[best].b = s;
-		binseg_best_split(cost, m, &segs[best]);
-		binseg_best_split(cost, m, &segs[best + 1]);
 		n_segs++;
+		rc = binseg_best_split(cost, m, &segs[best], budget, err);
+		if (rc == 0) {
+			rc = binseg_best_split(cost, m, &segs[best + 1], budget, err);
+		}
+	}
+	if (rc) {
+		free(segs);
+		return rc;
 	}
 
 	out->pos = (int64_t *)malloc(sizeof(int64_t) * (size_t)n_segs);
@@ -309,7 +339,8 @@ int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int6
 // Dynamic programming with a known number of change points
 //===--------------------------------------------------------------------===//
 
-int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, cpt_bkps *out, char *err) {
+int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, cpt_budget *budget,
+             cpt_bkps *out, char *err) {
 	out->pos = NULL;
 	out->count = 0;
 	int64_t m = cpt_effective_min_size(cost, min_size);
@@ -340,7 +371,8 @@ int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, 
 		prev_row[t] = t >= m ? cost->eval(cost->ctx, 0, t) : INFINITY;
 		arg[t] = 0;
 	}
-	for (int64_t k = 1; k < n_seg; k++) {
+	int rc = budget_charge(budget, cost, n, err);
+	for (int64_t k = 1; k < n_seg && rc == 0; k++) {
 		int64_t *arg_k = arg + (size_t)k * n1;
 		// [0, t) as k+1 segments: t needs (k+1)*m points and the remaining segments need theirs.
 		int64_t t_lo = (k + 1) * m;
@@ -361,23 +393,27 @@ int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, 
 			}
 			cur_row[t] = best;
 			arg_k[t] = best_s;
+			if ((rc = budget_charge(budget, cost, t - m - k * m + 1, err)) != 0) {
+				break;
+			}
 		}
 		double *tmp = prev_row;
 		prev_row = cur_row;
 		cur_row = tmp;
 	}
 
-	out->pos = (int64_t *)malloc(sizeof(int64_t) * (size_t)n_seg);
-	int rc = 0;
-	if (!out->pos) {
-		snprintf(err, CPT_ERR_LEN, "out of memory");
-		rc = 1;
-	} else {
-		out->count = n_seg;
-		int64_t t = n;
-		for (int64_t k = n_seg - 1; k >= 0; k--) {
-			out->pos[k] = t;
-			t = arg[(size_t)k * n1 + t];
+	if (rc == 0) {
+		out->pos = (int64_t *)malloc(sizeof(int64_t) * (size_t)n_seg);
+		if (!out->pos) {
+			snprintf(err, CPT_ERR_LEN, "out of memory");
+			rc = 1;
+		} else {
+			out->count = n_seg;
+			int64_t t = n;
+			for (int64_t k = n_seg - 1; k >= 0; k--) {
+				out->pos[k] = t;
+				t = arg[(size_t)k * n1 + t];
+			}
 		}
 	}
 	free(prev_row);
@@ -396,12 +432,13 @@ typedef struct {
 } crops_set;
 
 // Run PELT at beta and return the index of its segmentation in the set (merging duplicates).
-static int crops_run(const cpt_cost *cost, int64_t n, double beta, int64_t min_size, crops_set *set, int64_t *idx,
-                     char *err) {
+static int crops_run(const cpt_cost *cost, int64_t n, double beta, int64_t min_size, cpt_budget *budget,
+                     crops_set *set, int64_t *idx, char *err) {
 	cpt_penalty pen = {beta, 0};
 	cpt_bkps b;
-	if (cpt_pelt(cost, n, pen, min_size, &b, err)) {
-		return 1;
+	int rc = cpt_pelt(cost, n, pen, min_size, budget, &b, err);
+	if (rc) {
+		return rc;
 	}
 	// Optimal segmentations with the same number of change points have the same cost, so the
 	// number of change points identifies a point on the lower envelope.
@@ -454,7 +491,7 @@ void cpt_crops_free(cpt_crops_entry *entries, int64_t count) {
 }
 
 int cpt_crops(const cpt_cost *cost, int64_t n, double pen_min, double pen_max, int64_t min_size,
-              cpt_crops_entry **out, int64_t *out_count, char *err) {
+              cpt_budget *budget, cpt_crops_entry **out, int64_t *out_count, char *err) {
 	*out = NULL;
 	*out_count = 0;
 	crops_set set = {NULL, 0, 0};
@@ -467,9 +504,11 @@ int cpt_crops(const cpt_cost *cost, int64_t n, double pen_min, double pen_max, i
 	int rc = 0;
 
 	int64_t i_min, i_max;
-	if (crops_run(cost, n, pen_min, min_size, &set, &i_min, err) ||
-	    (pen_max > pen_min && crops_run(cost, n, pen_max, min_size, &set, &i_max, err))) {
-		rc = 1;
+	rc = crops_run(cost, n, pen_min, min_size, budget, &set, &i_min, err);
+	if (rc == 0 && pen_max > pen_min) {
+		rc = crops_run(cost, n, pen_max, min_size, budget, &set, &i_max, err);
+	}
+	if (rc) {
 		goto done;
 	}
 	if (pen_max > pen_min) {
@@ -495,8 +534,7 @@ int cpt_crops(const cpt_cost *cost, int64_t n, double pen_min, double pen_max, i
 			continue; // rounding put the intersection outside the interval
 		}
 		int64_t i_int;
-		if (crops_run(cost, n, b_int, min_size, &set, &i_int, err)) {
-			rc = 1;
+		if ((rc = crops_run(cost, n, b_int, min_size, budget, &set, &i_int, err)) != 0) {
 			goto done;
 		}
 		int64_t m_int = set.items[i_int].bkps.count - 1;

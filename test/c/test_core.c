@@ -195,7 +195,7 @@ int main(void) {
 			cpt_penalty pens[2] = {{uniform() * 3 * log((double)n + 1), 0}, cpt_penalty_named(CPT_PEN_MBIC, n, 1)};
 			for (int p = 0; p < 2; p++) {
 				cpt_bkps b;
-				CHECK(cpt_pelt(&cost, n, pens[p], min_size, &b, err) == 0, "pelt: %s", err);
+				CHECK(cpt_pelt(&cost, n, pens[p], min_size, NULL, &b, err) == 0, "pelt: %s", err);
 				check_valid(&b, n, m, "pelt");
 				if (n >= 2 * m) {
 					double got = penalised(&cost, &b, pens[p]), best = optimal_partitioning(&cost, n, pens[p], m);
@@ -207,12 +207,12 @@ int main(void) {
 				checks++;
 			}
 			cpt_bkps b;
-			CHECK(cpt_binseg(&cost, n, -1, pens[0].beta, min_size, &b, err) == 0, "binseg: %s", err);
+			CHECK(cpt_binseg(&cost, n, -1, pens[0].beta, min_size, NULL, &b, err) == 0, "binseg: %s", err);
 			check_valid(&b, n, m, "binseg");
 			cpt_bkps_free(&b);
 			if (n > 0 && n <= 40) {
 				for (int64_t k = 0; (k + 1) * m <= n && k <= 3; k++) {
-					CHECK(cpt_dynp(&cost, n, k, min_size, &b, err) == 0, "dynp: %s", err);
+					CHECK(cpt_dynp(&cost, n, k, min_size, NULL, &b, err) == 0, "dynp: %s", err);
 					check_valid(&b, n, m, "dynp");
 					CHECK(b.count == k + 1, "dynp: %lld segments, wanted %lld", (long long)b.count, (long long)k + 1);
 					double got = cpt_segmentation_cost(&cost, &b), best = exhaustive(&cost, 0, n, k, m);
@@ -224,7 +224,7 @@ int main(void) {
 			}
 			cpt_crops_entry *entries;
 			int64_t count;
-			CHECK(cpt_crops(&cost, n, 0.5, 50, min_size, &entries, &count, err) == 0, "crops: %s", err);
+			CHECK(cpt_crops(&cost, n, 0.5, 50, min_size, NULL, &entries, &count, err) == 0, "crops: %s", err);
 			for (int64_t i = 0; i < count; i++) {
 				check_valid(&entries[i].bkps, n, m, "crops");
 			}

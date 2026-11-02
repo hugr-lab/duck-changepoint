@@ -42,10 +42,11 @@ static void DynpFunction(duckdb_function_info info, duckdb_data_chunk input, duc
 			return;
 		}
 		cpt_bkps bkps;
-		int rc = cpt_dynp(&cost, n, n_bkps, min_size, &bkps, err);
+		cpt_budget budget = cpt_function_budget(info);
+		int rc = cpt_dynp(&cost, n, n_bkps, min_size, &budget, &bkps, err);
 		cpt_cost_destroy(&cost);
 		if (rc) {
-			duckdb_scalar_function_set_error(info, err);
+			cpt_report_error(info, "cpt_dynp", rc, err);
 			return;
 		}
 		rc = cpt_write_int_list(output, row, &offset, bkps.pos, bkps.count, err);

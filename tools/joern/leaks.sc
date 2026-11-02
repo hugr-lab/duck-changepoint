@@ -4,7 +4,8 @@
 //
 // For every heap allocation (malloc/calloc/realloc) and every DuckDB handle creation
 // (duckdb_create_*), check that the assigned value is
-//   - released in the same function (free / cpt_*_free / cpt_*_destroy / duckdb_destroy_*), or
+//   - released in the same function (free / cpt_*_free / cpt_*_destroy / duckdb_destroy_*) or handed to
+//     DuckDB together with a delete callback (duckdb_*_set_bind_data / set_extra_info), or
 //   - returned to the caller (ownership transfer; the caller is then checked the same way), or
 //   - stored in a struct field that some function releases (e.g. out->pos freed by cpt_bkps_free).
 // Anything else is reported as UNRELEASED. This is a per-function audit, not path-sensitive:
@@ -12,7 +13,10 @@
 
 import io.shiftleft.semanticcpg.language.*
 
-val releaseCalls = "free|cpt_.*_free|cpt_cost_destroy|cpt_crops_free|duckdb_destroy_.*"
+// Releases, plus hand-overs to DuckDB, which frees the pointer through the delete callback it is given
+// (e.g. duckdb_scalar_function_set_bind_data(info, data, free)).
+val releaseCalls =
+  "free|cpt_.*_free|cpt_cost_destroy|cpt_crops_free|duckdb_destroy_.*|duckdb_.*_set_bind_data|duckdb_.*_set_extra_info"
 
 def stripRef(code: String): String = code.stripPrefix("&").trim
 

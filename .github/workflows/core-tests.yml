@@ -13,6 +13,7 @@ jobs:
   core:
     name: test_core (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20   # ASan can hang at startup on some macOS releases; fail instead of waiting 6 h
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +27,7 @@ jobs:
   compat:
     name: SQL tests on DuckDB 1.5.6
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,6 +42,7 @@ jobs:
   leaks:
     name: leak_check (macOS leaks)
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:

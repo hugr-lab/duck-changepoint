@@ -23,6 +23,8 @@ typedef struct cpt_cost {
 	double K;
 	// Smallest segment length for which the cost is well defined (e.g. 2 for 'normal').
 	int64_t min_len;
+	// Relative price of one eval() for the work limit: 1 for l2/poisson, 2 for normal, log2(n) for l1.
+	int64_t eval_weight;
 	void (*free)(void *ctx);
 } cpt_cost;
 

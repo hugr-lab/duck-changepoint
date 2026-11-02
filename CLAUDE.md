@@ -44,6 +44,8 @@ Use `rtk` as a command prefix in this environment (see the user's global instruc
 - DuckDB 2.0 rejects `x -> ...` lambdas by default. Use `lambda x: ...` in tests and docs.
 - `generate_series` has no DOUBLE overload; build penalty grids from `range()`.
 - The sqllogictest runner stops at the first failing file.
+- A C API scalar function cannot be interrupted: new loops must charge `cpt_budget` (see algo.c)
+  so `cpt_max_evaluations` keeps bounding run time.
 - With no git commits, set `EXTENSION_VERSION` or the metadata footer is corrupt.
 - Expected values in tests must be derived from the model, not copied from output. Several tests
   carry the arithmetic in a comment.

@@ -21,6 +21,7 @@ SELECT cpt_pelt(list(value ORDER BY ts), 'l2') AS bkps FROM readings;
 - [Penalties](#penalties)
 - [Differences from ruptures and changepoint](#differences-from-ruptures-and-changepoint)
 - [Performance](#performance)
+- [Limits and cancellation](#limits-and-cancellation)
 - [Building and testing](#building-and-testing)
 - [License](#license)
 - [Talks](#talks)
@@ -256,6 +257,27 @@ change points in a very long series, little can be pruned inside the long segmen
 approaches O(n²). Binary segmentation stays O(n log n) in that case: on 1e5 points with 3 changes it
 takes 2 ms, against 0.1 s for l2 PELT and about 6 s for l1 PELT, where each evaluation costs
 O(log n). `cpt_dynp` is O(n_bkps · n²) and meant for series up to roughly 1e4 points.
+
+## Limits and cancellation
+
+A scalar function in the C API cannot see that its query was interrupted: once a `cpt_*` call has
+started on a series, it runs to the end. To keep that bounded, every call (one series) has a work limit:
+
+```sql
+SET cpt_max_evaluations = 1000000000;   -- default; 0 = no limit
+```
+
+The unit is one segment cost evaluation. An `l1` evaluation counts log₂ n units and a `normal`
+evaluation counts 2, so the limit means roughly the same time for every cost. At the default, a call
+stops after about 2–3 s on a laptop with an error that says why. PELT on 200,000 points with a single
+change would otherwise take about 25 s (l2) or several minutes (l1). The 1e6-point benchmark above uses
+about 3.8 × 10⁸ units. The limit applies to PELT, Binseg, Dynp and to a whole CROPS sweep.
+
+When the limit is hit, the error message suggests what to do. For long series with few changes,
+`cpt_binseg` (O(n log n)) finds the same change in milliseconds. To raise or remove the limit,
+`SET cpt_max_evaluations`. On a server where users send their own SQL, set it globally
+(`SET GLOBAL cpt_max_evaluations = ...`) and, if needed, stop users from changing it with DuckDB's
+`SET lock_configuration = true`.
 
 ## Building and testing
 

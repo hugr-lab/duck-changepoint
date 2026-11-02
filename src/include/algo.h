@@ -17,6 +17,18 @@ typedef struct {
 
 void cpt_bkps_free(cpt_bkps *b);
 
+// Limit on cost evaluations for one SQL call, in units of one O(1) evaluation (an l1 evaluation
+// counts log2 n units, see cpt_cost.eval_weight). The C API cannot tell a scalar function that its query
+// was interrupted, so this bounds how long a call can run (PELT approaches O(n^2) on long series with
+// few changes). Algorithms return CPT_BUDGET_EXCEEDED when n_evals passes max_evals.
+// max_evals <= 0 means unlimited. A NULL budget is unlimited.
+typedef struct {
+	int64_t max_evals;
+	int64_t n_evals;
+} cpt_budget;
+
+#define CPT_BUDGET_EXCEEDED 2
+
 typedef enum { CPT_PEN_VALUE = 0, CPT_PEN_BIC, CPT_PEN_MBIC, CPT_PEN_AIC } cpt_penalty_kind;
 
 typedef struct {
@@ -37,15 +49,17 @@ int64_t cpt_effective_min_size(const cpt_cost *cost, int64_t min_size);
 double cpt_segmentation_cost(const cpt_cost *cost, const cpt_bkps *bkps);
 
 // PELT, Killick, Fearnhead & Eckley (2012). Exact minimiser of sum C + beta * (#segments).
-int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size, cpt_bkps *out, char *err);
+int cpt_pelt(const cpt_cost *cost, int64_t n, cpt_penalty pen, int64_t min_size, cpt_budget *budget,
+             cpt_bkps *out, char *err);
 
 // Binary segmentation. n_bkps >= 0 selects "stop after n_bkps splits"; otherwise splitting stops
 // once the best gain is not larger than pen.
-int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int64_t min_size, cpt_bkps *out,
-               char *err);
+int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int64_t min_size, cpt_budget *budget,
+               cpt_bkps *out, char *err);
 
 // Optimal partition into exactly n_bkps + 1 segments (segment neighbourhood), O(n_bkps n^2).
-int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, cpt_bkps *out, char *err);
+int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, cpt_budget *budget,
+             cpt_bkps *out, char *err);
 
 typedef struct {
 	double penalty; // smallest penalty in the sweep at which PELT returned this segmentation
@@ -56,5 +70,5 @@ typedef struct {
 // CROPS, Haynes, Eckley & Fearnhead (2017): every distinct optimal segmentation for penalties in
 // [pen_min, pen_max]. Entries are sorted by penalty ascending (n_bkps descending).
 int cpt_crops(const cpt_cost *cost, int64_t n, double pen_min, double pen_max, int64_t min_size,
-              cpt_crops_entry **out, int64_t *out_count, char *err);
+              cpt_budget *budget, cpt_crops_entry **out, int64_t *out_count, char *err);
 void cpt_crops_free(cpt_crops_entry *entries, int64_t count);
