@@ -29,6 +29,7 @@ typedef struct cpt_cost {
     int n_params;                                      // for BIC / MBIC / AIC
     double K;                                          // Theorem 3.1 pruning constant
     int64_t min_len;                                   // 2 for 'normal'
+    int64_t eval_weight;                               // work-limit units per eval: 1 l2/poisson, 2 normal, log2 n l1
     void (*free)(void *ctx);
 } cpt_cost;
 ```
@@ -37,7 +38,8 @@ To add a cost:
 
 1. Write `init`/`eval`/`free` (in `cost.c`, or in a new file for anything sizeable).
 2. Add a `cpt_cost_kind` and a name in `cpt_cost_parse`.
-3. Fill the struct in `cpt_cost_create`, and state in a comment why K is valid.
+3. Fill the struct in `cpt_cost_create`, state in a comment why K is valid, and set `eval_weight`
+   to the cost of one `eval` relative to an O(1) evaluation (it scales `cpt_max_evaluations`).
 4. Add a naive evaluation to `test/c/test_core.c` and to `test/python/check_optimality.py`.
 
 ## DuckDB C API usage

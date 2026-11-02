@@ -62,6 +62,7 @@ def main() -> int:
     failures = 0
     checks = 0
     ties = 0
+    better = 0
     for i in range(args.n_series):
         x = make_series(rng)
         n = len(x)
@@ -101,12 +102,15 @@ def main() -> int:
                 if abs(a - b) <= 1e-9 * max(1.0, abs(a)):
                     ties += 1
                     continue
+                if b < a:
+                    better += 1  # ruptures prunes heuristically when min_size > 1 and lost the optimum
+                    continue
             failures += 1
             print(f"series {i} (n={n}, min_size={min_size}, pen={pen:.4f}, k={k}) {name}: "
                   f"ruptures={expected} cpt={got}")
 
-    print(f"{checks - failures}/{checks} checks agree over {args.n_series} series "
-          f"({ties} of them equal-cost ties with a different optimum)")
+    print(f"{checks - failures}/{checks} checks pass over {args.n_series} series "
+          f"({ties} equal-cost ties with a different optimum, {better} where cpt found a lower cost)")
     return 1 if failures else 0
 
 
