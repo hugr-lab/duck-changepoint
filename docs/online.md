@@ -36,6 +36,10 @@ Positions count from 1 since the detector was created, across all updates. `n` i
 points seen. `statistic` is the current value of the test statistic, and an alarm fires when it
 reaches the threshold. `training` is true while the baseline is still being estimated.
 
+On the update in which an alarm fires, `statistic` is 0 (or small): the detector restarts right after
+the alarm, so it reports the new phase. The value that triggered the alarm is in the alarm's own
+`statistic` field.
+
 The default threshold is 15, and the default `train` is 100 points. `NULL` arguments mean the default.
 A `NULL` list of new values returns `NULL`; a `NULL` element or state is an error.
 

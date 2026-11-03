@@ -346,10 +346,15 @@ static int take_hull(cursor *c, cpt_hull *h, int64_t len, char *err) {
 	return 0;
 }
 
-// Positions stay far from overflow, and the detection phase lies within the points seen.
+static int within(int64_t v, int64_t lo, int64_t hi) {
+	return v >= lo && v <= hi;
+}
+
+// Positions stay far from overflow, and the detection phase lies within the points seen. Each bound uses
+// only values already checked, so nothing here can overflow (t0 + k could, for a crafted state).
 static int counts_valid(const cpt_online *d) {
-	int64_t limit = INT64_MAX / 4;
-	return d->n >= 0 && d->n < limit && d->t0 >= 0 && d->k >= 0 && d->t0 + d->k <= d->n && d->n_train >= 0;
+	return within(d->n, 0, INT64_MAX / 4) && within(d->t0, 0, d->n) && within(d->k, 0, d->n - d->t0) &&
+	       d->n_train >= 0;
 }
 
 static int values_valid(const cpt_online *d) {

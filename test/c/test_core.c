@@ -507,6 +507,20 @@ static int test_online_decode(void) {
 	}
 	CHECK(cpt_online_decode((const uint8_t *)"not a detector", 14, &d, err) == 1 && strstr(err, "cpt_online_new"),
 	      "decode accepted garbage");
+	// Positions that overflow when added (review of #7): n, t0 and k sit at bytes 32, 40 and 48 of the header.
+	struct {
+		int64_t n, t0, k;
+	} crafted[] = {{INT64_MAX, INT64_MAX, INT64_MAX}, {1000, INT64_MAX, INT64_MAX}, {1000, 600, 401}};
+	for (size_t i = 0; i < sizeof(crafted) / sizeof(crafted[0]); i++) {
+		uint8_t *bad = malloc(len);
+		memcpy(bad, buf, len);
+		memcpy(bad + 32, &crafted[i].n, 8);
+		memcpy(bad + 40, &crafted[i].t0, 8);
+		memcpy(bad + 48, &crafted[i].k, 8);
+		CHECK(cpt_online_decode(bad, len, &d, err) == 1, "decode accepted crafted positions, case %zu", i);
+		free(bad);
+		checks++;
+	}
 	free(buf);
 	cpt_online_alarms_free(&alarms);
 	return checks + 1;
