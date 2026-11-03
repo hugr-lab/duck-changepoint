@@ -71,14 +71,15 @@ cpt_budget cpt_function_budget(duckdb_function_info info) {
 }
 
 // What to try instead when a function hits the work limit.
+// A string literal, not a const variable: MSVC (C2099) only accepts constant expressions here.
+#define CPT_PELT_HINT " PELT approaches O(n^2) on long series with few change points; cpt_binseg is O(n log n)."
+
 static const char *budget_hint(const char *function) {
-	static const char *const PELT = " PELT approaches O(n^2) on long series with few change points; cpt_binseg "
-	                                "is O(n log n).";
 	static const struct {
 		const char *function;
 		const char *hint;
-	} HINTS[] = {{"cpt_pelt", PELT},
-	             {"cpt_crops", PELT},
+	} HINTS[] = {{"cpt_pelt", CPT_PELT_HINT},
+	             {"cpt_crops", CPT_PELT_HINT},
 	             {"cpt_dynp", " cpt_dynp is O(n_bkps * n^2); cpt_pelt or cpt_binseg scale better."}};
 	for (size_t i = 0; i < sizeof(HINTS) / sizeof(HINTS[0]); i++) {
 		if (strcmp(function, HINTS[i].function) == 0) {
