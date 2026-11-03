@@ -363,13 +363,14 @@ int cpt_binseg(const cpt_cost *cost, int64_t n, int64_t n_bkps, double pen, int6
 // Dynamic programming with a known number of change points
 //===--------------------------------------------------------------------===//
 
+// A negative n_bkps is rejected for every series; an empty series gives [] for any other n_bkps.
 static int dynp_check(int64_t n, int64_t n_bkps, int64_t m, char *err) {
 	if (n_bkps < 0) {
 		snprintf(err, CPT_ERR_LEN, "n_bkps must be >= 0, got %lld", (long long)n_bkps);
 		return 1;
 	}
 	// n_bkps + 1 > n / m, checked before the addition so that it cannot overflow.
-	if (n_bkps >= n / m) {
+	if (n > 0 && n_bkps >= n / m) {
 		snprintf(err, CPT_ERR_LEN, "cannot split a series of length %lld into %llu segments of at least %lld elements",
 		         (long long)n, (unsigned long long)n_bkps + 1, (long long)m);
 		return 1;
@@ -461,11 +462,11 @@ int cpt_dynp(const cpt_cost *cost, int64_t n, int64_t n_bkps, int64_t min_size, 
 	out->pos = NULL;
 	out->count = 0;
 	int64_t m = cpt_effective_min_size(cost, min_size);
-	if (n == 0) {
-		return 0;
-	}
 	if (dynp_check(n, n_bkps, m, err)) {
 		return 1;
+	}
+	if (n == 0) {
+		return 0;
 	}
 	int64_t n_seg = n_bkps + 1;
 	dynp_ws w;

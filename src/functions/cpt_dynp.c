@@ -14,7 +14,7 @@ static int run_dynp(duckdb_data_chunk input, idx_t row, const cpt_cost *cost, co
 		snprintf(err, CPT_ERR_LEN, "cpt_dynp: n_bkps must not be NULL");
 		return 1;
 	}
-	// a negative n_bkps is rejected by cpt_dynp
+	// a negative n_bkps is rejected by cpt_dynp, also for an empty series
 	return cpt_dynp(cost, args->n, cpt_arg_bigint(input, 1, row, 0), args->min_size, budget, out, err);
 }
 

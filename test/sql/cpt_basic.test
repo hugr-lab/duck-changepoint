@@ -158,6 +158,12 @@ SELECT cpt_dynp([1.0, 2, 3], -1)
 ----
 n_bkps must be >= 0, got -1
 
+# also for an empty series, as cpt_binseg does (an empty series with n_bkps >= 0 still gives [])
+statement error
+SELECT cpt_dynp([]::DOUBLE[], -1)
+----
+n_bkps must be >= 0, got -1
+
 statement error
 SELECT cpt_dynp([1.0, 2, 3], 1, 'l2', 0)
 ----
