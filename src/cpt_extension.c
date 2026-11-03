@@ -125,7 +125,7 @@ bool cpt_add_overload(duckdb_scalar_function_set set, const char *name, duckdb_l
 
 static bool (*const REGISTRATIONS[])(duckdb_connection) = {
     cpt_register_settings, cpt_register_pelt,  cpt_register_binseg,
-    cpt_register_dynp,     cpt_register_crops, cpt_register_segment_stats,
+    cpt_register_dynp,     cpt_register_crops, cpt_register_segment_stats, cpt_register_online,
 };
 
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection, duckdb_extension_info info,
