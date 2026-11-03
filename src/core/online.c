@@ -265,6 +265,9 @@ typedef struct {
 } cursor;
 
 static void put(cursor *c, const void *v, size_t size) {
+	if (size == 0) {
+		return; // an empty hull has NULL arrays, and memcpy(dst, NULL, 0) is undefined
+	}
 	memcpy(c->p, v, size);
 	c->p += size;
 	c->left -= size;
@@ -274,6 +277,9 @@ static int take(cursor *c, void *v, size_t size) {
 	if (c->left < size) {
 		return 1;
 	}
+	if (size == 0) {
+		return 0;
+	}
 	memcpy(v, c->p, size);
 	c->p += size;
 	c->left -= size;
@@ -281,6 +287,9 @@ static int take(cursor *c, void *v, size_t size) {
 }
 
 static void put_hull(cursor *c, const cpt_hull *h) {
+	if (h->len == 0) {
+		return; // also avoids NULL + 0 for a hull that was never allocated
+	}
 	put(c, h->tau + h->head, sizeof(int64_t) * (size_t)h->len);
 	put(c, h->v + h->head, sizeof(double) * (size_t)h->len);
 }

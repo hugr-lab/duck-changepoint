@@ -434,7 +434,9 @@ static int test_online_training(void) {
 }
 
 static int same_alarms(const cpt_online_alarms *a, const cpt_online_alarms *b) {
-	return a->count == b->count && memcmp(a->items, b->items, sizeof(cpt_online_alarm) * (size_t)a->count) == 0;
+	// empty lists have NULL items, and memcmp(NULL, NULL, 0) is undefined
+	return a->count == b->count &&
+	       (a->count == 0 || memcmp(a->items, b->items, sizeof(cpt_online_alarm) * (size_t)a->count) == 0);
 }
 
 // The state after encode/decode continues exactly where it left off, in any chunking.
