@@ -35,7 +35,9 @@ Use `rtk` as a command prefix in this environment (see the user's global instruc
 
 ## Where things are
 
-- `src/core/cost.c`, `cost_l1.c`, `algo.c`: the numerics.
+- `src/core/cost.c`, `cost_l1.c`, `algo.c`: the offline numerics; `online.c`: the online detector.
+  Its state BLOB is a versioned format: bump `CPT_ONLINE_VERSION` on any change, and keep `decode`
+  validating everything (the BLOB comes from users).
 - `src/functions/*.c`: one file per SQL function, helpers in `list_io.c`.
 - `docs/`: architecture, algorithms, cost/penalty derivations, testing.
 - Reference data from R changepoint (GPL) lives in the separate `duck-changepoint-reference` repo.

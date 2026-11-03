@@ -6,11 +6,13 @@ src/
 ├── core/                    numerical core: plain C11, no DuckDB headers
 │   ├── cost.c               cost interface, factory, l2 / normal / poisson
 │   ├── cost_l1.c            l1 via a wavelet matrix
-│   └── algo.c               PELT, Binseg, Dynp, CROPS, penalties
+│   ├── algo.c               PELT, Binseg, Dynp, CROPS, penalties
+│   └── online.c             online detector (FOCuS0): hull of candidates, state encoding
 ├── functions/               SQL surface: one file per SQL function
 │   ├── list_io.c            reading LIST/VARCHAR/optional args, writing LIST(INTEGER)
 │   ├── cpt_call.c           the shared row loop: prepare args and cost, run, write, report errors
 │   ├── cpt_pelt.c  cpt_binseg.c  cpt_dynp.c  cpt_crops.c  cpt_segment_stats.c
+│   ├── cpt_online.c         cpt_online_new / cpt_online_update / cpt_online
 └── include/                 cost.h, algo.h, list_io.h, cpt_functions.h, cpt_call.h,
                              cpt_alloc.h (allocation wrappers), cpt_text.h
 duckdb_capi/                 duckdb.h + duckdb_extension.h from DuckDB v1.5.6 (TARGET_DUCKDB_VERSION)

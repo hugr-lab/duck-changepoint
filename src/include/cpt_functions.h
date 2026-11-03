@@ -29,3 +29,4 @@ bool cpt_register_binseg(duckdb_connection connection);
 bool cpt_register_dynp(duckdb_connection connection);
 bool cpt_register_crops(duckdb_connection connection);
 bool cpt_register_segment_stats(duckdb_connection connection);
+bool cpt_register_online(duckdb_connection connection);

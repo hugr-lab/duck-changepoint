@@ -27,7 +27,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BUILD = os.path.join(ROOT, "build", "crap")
-CORE = ["src/core/cost.c", "src/core/cost_l1.c", "src/core/algo.c"]
+CORE = ["src/core/cost.c", "src/core/cost_l1.c", "src/core/algo.c", "src/core/online.c"]
 COVERAGE_FLAGS = ["-fprofile-instr-generate", "-fcoverage-mapping", "-O0", "-g"]
 # lizard reports the entry point under its macro name; the compiled function is <name>_init_c_api.
 ALIASES = {"DUCKDB_EXTENSION_ENTRYPOINT": "cpt_init_c_api"}

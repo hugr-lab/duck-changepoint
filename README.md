@@ -16,6 +16,7 @@ SELECT cpt_pelt(list(value ORDER BY ts), 'l2') AS bkps FROM readings;
 
 - [Installation](#installation)
 - [Functions](#functions)
+- [Online detection](#online-detection)
 - [Examples](#examples)
 - [Costs](#costs)
 - [Penalties](#penalties)
@@ -27,7 +28,7 @@ SELECT cpt_pelt(list(value ORDER BY ts), 'l2') AS bkps FROM readings;
 - [Talks](#talks)
 - [References](#references)
 
-Further documentation: [docs/examples-from-talks.md](docs/examples-from-talks.md), [docs/architecture.md](docs/architecture.md), [docs/algorithms.md](docs/algorithms.md),
+Further documentation: [docs/online.md](docs/online.md), [docs/examples-from-talks.md](docs/examples-from-talks.md), [docs/architecture.md](docs/architecture.md), [docs/algorithms.md](docs/algorithms.md),
 [docs/costs-and-penalties.md](docs/costs-and-penalties.md), [docs/TESTING.md](docs/TESTING.md),
 [DEVELOPMENT.md](DEVELOPMENT.md).
 
@@ -93,6 +94,26 @@ so `cpt_pelt(series, cost, penalty)` reproduces `bkps`.
 for a one-element segment) and length. `bkps` must be strictly increasing and end at `n`.
 
 `min_size` is the minimum number of points in a segment. The `normal` cost always uses at least 2.
+
+## Online detection
+
+The offline functions above look at a whole series. `cpt_online_*` watch a stream: the detector state is
+a value (a `BLOB`) that `cpt_online_update` advances with each batch of new points, returning the next
+state and any alarms. The algorithm is FOCuS⁰ (Romano et al. 2023), an exact Page-CUSUM over every
+change size, at O(log n) expected work per point.
+
+```sql
+CREATE TABLE detector AS SELECT 'sensor-1' AS sensor, cpt_online_new() AS state;
+
+-- for each batch of new readings
+SELECT (cpt_online_update(state, [21.3, 19.8, 24.9])).alarms FROM detector;
+
+-- backtest over history
+SELECT cpt_online(list(value ORDER BY ts)) FROM readings;
+```
+
+See [docs/online.md](docs/online.md) for the functions, keeping the state in a table, the algorithm,
+and how to choose the threshold.
 
 ## Examples
 
