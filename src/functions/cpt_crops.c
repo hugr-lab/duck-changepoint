@@ -1,6 +1,7 @@
 // cpt_crops(series LIST(DOUBLE), cost VARCHAR, pen_min DOUBLE, pen_max DOUBLE [, min_size BIGINT])
 //   -> LIST(STRUCT(penalty DOUBLE, n_bkps INTEGER, bkps LIST(INTEGER)))
 
+#include "cpt_call.h"
 #include "cpt_functions.h"
 #include "list_io.h"
 
@@ -38,11 +39,38 @@ static int write_entries(duckdb_vector output, idx_t row, idx_t *offset, idx_t *
 static int read_pen(duckdb_data_chunk input, idx_t col, idx_t row, const char *what, double *out, char *err) {
 	bool is_null;
 	*out = cpt_arg_double(input, col, row, 0, &is_null);
-	if (is_null || !(*out >= 0) || *out - *out != 0) {
-		snprintf(err, CPT_ERR_LEN, "cpt_crops: %s must be a finite number >= 0", what);
+	if (is_null) {
+		snprintf(err, CPT_ERR_LEN, "cpt_crops: %s must not be NULL", what);
+		return 1;
+	}
+	return cpt_check_penalty(*out, what, err);
+}
+
+// The penalty range: pen_min and pen_max (columns 2 and 3), finite, >= 0 and in order.
+static int crops_range(duckdb_data_chunk input, idx_t row, double *pen_min, double *pen_max, char *err) {
+	if (read_pen(input, 2, row, "pen_min", pen_min, err) || read_pen(input, 3, row, "pen_max", pen_max, err)) {
+		return 1;
+	}
+	if (*pen_min > *pen_max) {
+		snprintf(err, CPT_ERR_LEN, "cpt_crops: pen_min (%g) must be <= pen_max (%g)", *pen_min, *pen_max);
 		return 1;
 	}
 	return 0;
+}
+
+static int crops_row(duckdb_function_info info, duckdb_data_chunk input, idx_t row, cpt_crops_entry **entries,
+                     int64_t *count, char *err) {
+	double pen_min, pen_max;
+	cpt_series_args args;
+	cpt_cost cost;
+	if (crops_range(input, row, &pen_min, &pen_max, err) ||
+	    cpt_prepare(input, row, (cpt_arg_layout) {1, 4}, &args, &cost, err)) {
+		return 1;
+	}
+	cpt_budget budget = cpt_function_budget(info);
+	int rc = cpt_crops(&cost, args.n, pen_min, pen_max, args.min_size, &budget, entries, count, err);
+	cpt_cost_destroy(&cost);
+	return rc;
 }
 
 static void CropsFunction(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output) {
@@ -55,39 +83,15 @@ static void CropsFunction(duckdb_function_info info, duckdb_data_chunk input, du
 			cpt_write_null_list(output, row, offset);
 			continue;
 		}
-		const double *x;
-		int64_t n, min_size;
-		double pen_min, pen_max;
-		cpt_cost_kind kind;
-		if (cpt_read_series(series, row, &x, &n, err) || cpt_arg_cost(input, 1, row, &kind, err) ||
-		    read_pen(input, 2, row, "pen_min", &pen_min, err) || read_pen(input, 3, row, "pen_max", &pen_max, err) ||
-		    cpt_arg_min_size(input, 4, row, &min_size, err)) {
-			duckdb_scalar_function_set_error(info, err);
-			return;
+		cpt_crops_entry *entries = NULL;
+		int64_t count = 0;
+		int rc = crops_row(info, input, row, &entries, &count, err);
+		if (rc == 0) {
+			rc = write_entries(output, row, &offset, &inner_offset, entries, count, err);
 		}
-		if (pen_min > pen_max) {
-			snprintf(err, CPT_ERR_LEN, "cpt_crops: pen_min (%g) must be <= pen_max (%g)", pen_min, pen_max);
-			duckdb_scalar_function_set_error(info, err);
-			return;
-		}
-		cpt_cost cost;
-		if (cpt_cost_create(kind, x, n, &cost, err)) {
-			duckdb_scalar_function_set_error(info, err);
-			return;
-		}
-		cpt_crops_entry *entries;
-		int64_t count;
-		cpt_budget budget = cpt_function_budget(info);
-		int rc = cpt_crops(&cost, n, pen_min, pen_max, min_size, &budget, &entries, &count, err);
-		cpt_cost_destroy(&cost);
-		if (rc) {
-			cpt_report_error(info, "cpt_crops", rc, err);
-			return;
-		}
-		rc = write_entries(output, row, &offset, &inner_offset, entries, count, err);
 		cpt_crops_free(entries, count);
 		if (rc) {
-			duckdb_scalar_function_set_error(info, err);
+			cpt_report_error(info, "cpt_crops", rc, err);
 			return;
 		}
 	}

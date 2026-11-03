@@ -2,11 +2,11 @@
 //
 //   make joern_leaks          (builds build/joern/cpg.bin with joern-parse, then runs this script)
 //
-// For every heap allocation (malloc/calloc/realloc) and every DuckDB handle creation
+// For every heap allocation (malloc/calloc/realloc, or the cpt_ wrappers in cpt_alloc.h) and every DuckDB handle creation
 // (duckdb_create_*), check that the assigned value is
 //   - released in the same function (free / cpt_*_free / cpt_*_destroy / duckdb_destroy_*) or handed to
 //     DuckDB together with a delete callback (duckdb_*_set_bind_data / set_extra_info), or
-//   - returned to the caller (ownership transfer; the caller is then checked the same way), or
+//   - returned to the caller, directly or through an output parameter (`*out = p`), or
 //   - stored in a struct field that some function releases (e.g. out->pos freed by cpt_bkps_free).
 // Anything else is reported as UNRELEASED. This is a per-function audit, not path-sensitive:
 // early returns on error paths are covered by the dynamic checks (make leak_check).
@@ -47,9 +47,11 @@ def fieldOf(target: String): Option[String] =
         val fieldOwned = fieldOf(target).exists(releasedFields.contains)
         // copied into a released local or field, e.g. the realloc idiom `tmp = realloc(p, n); p = tmp;`
         val releasedInMethod = m.ast.isCall.name(releaseCalls).argument.code.l.map(stripRef).toSet
+        // or handed to the caller through an output parameter: `*out = p`
         val aliased = m.assignment.l.exists { b =>
           b.source.code == target &&
-            (releasedInMethod.contains(b.target.code) || fieldOf(b.target.code).exists(releasedFields.contains))
+            (releasedInMethod.contains(b.target.code) || fieldOf(b.target.code).exists(releasedFields.contains) ||
+              b.target.code.startsWith("*"))
         }
         val verdict =
           if released then "released"
@@ -59,7 +61,7 @@ def fieldOf(target: String): Option[String] =
         (kind, m.name, a.lineNumber.getOrElse(-1), s"$target = $callee(...)", verdict)
       }
 
-  val rows = audit("heap", "malloc|calloc|realloc") ++ audit("duckdb", "duckdb_create_.*")
+  val rows = audit("heap", "(cpt_)?(malloc|calloc|realloc)") ++ audit("duckdb", "duckdb_create_.*")
   println(f"${"kind"}%-7s ${"function"}%-28s ${"line"}%5s  ${"allocation"}%-52s verdict")
   rows.sortBy(r => (r._2, r._3)).foreach { case (k, f, l, what, v) =>
     println(f"$k%-7s $f%-28s $l%5d  ${what.take(52)}%-52s $v")

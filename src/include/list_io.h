@@ -20,8 +20,14 @@ void cpt_set_row_null(duckdb_vector vec, idx_t row);
 // longer than INT32_MAX. The pointer is valid until the function returns.
 int cpt_read_series(duckdb_vector list_vec, idx_t row, const double **x, int64_t *n, char *err);
 
+// Index of the first NULL among child[offset .. offset + length), or -1.
+int64_t cpt_first_null(duckdb_vector child, uint64_t offset, uint64_t length);
+
 // Borrow a VARCHAR row. Not NUL-terminated.
 void cpt_read_varchar(duckdb_vector vec, idx_t row, const char **data, size_t *len);
+
+// Whether an optional argument was given: its column exists and the row is not NULL.
+bool cpt_arg_present(duckdb_data_chunk input, idx_t col, idx_t row);
 
 // Optional arguments: return `def` when the argument column does not exist or the row is NULL.
 int64_t cpt_arg_bigint(duckdb_data_chunk input, idx_t col, idx_t row, int64_t def);

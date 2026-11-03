@@ -7,6 +7,9 @@
 //   - Dynp equals an exhaustive search for small n
 //   - every algorithm returns valid segmentations (increasing, ends at n, segments >= min_size)
 //   - n_bkps and min_size at the int64 limit neither overflow nor crash
+//   - every allocation failing in turn gives an "out of memory" error and no leak (needs
+//     -DCPT_FAULT_INJECTION, see src/include/cpt_alloc.h; leaks are caught by ASan/LSan and `leaks`)
+//   - work limits hit at every stage stop cleanly; invalid arguments are rejected
 
 #include "algo.h"
 #include "cost.h"
@@ -21,6 +24,10 @@
 #endif
 
 static int failures = 0;
+
+#ifdef CPT_FAULT_INJECTION
+long cpt_fail_countdown = 0;
+#endif
 
 #define CHECK(cond, ...)                                                                                               \
 	do {                                                                                                               \
@@ -189,6 +196,119 @@ static int test_extreme_arguments(void) {
 	return checks;
 }
 
+// Every algorithm on one cost, stopping at the first error. Results are freed; returns the error code.
+static int run_all(cpt_cost_kind kind, const double *x, int64_t n, cpt_budget *budget, char *err) {
+	cpt_cost cost;
+	int rc = cpt_cost_create(kind, x, n, &cost, err);
+	if (rc) {
+		return rc;
+	}
+	cpt_penalty bic = cpt_penalty_named(CPT_PEN_BIC, n, cost.n_params);
+	cpt_penalty mbic = cpt_penalty_named(CPT_PEN_MBIC, n, cost.n_params);
+	cpt_bkps b = {NULL, 0};
+	rc = cpt_pelt(&cost, n, bic, 2, budget, &b, err);
+	cpt_bkps_free(&b);
+	if (rc == 0) {
+		rc = cpt_pelt(&cost, n, mbic, 1, budget, &b, err);
+		cpt_bkps_free(&b);
+	}
+	if (rc == 0) {
+		rc = cpt_binseg(&cost, n, 3, 0, 2, budget, &b, err);
+		cpt_bkps_free(&b);
+	}
+	if (rc == 0) {
+		rc = cpt_binseg(&cost, n, -1, bic.beta, 1, budget, &b, err);
+		cpt_bkps_free(&b);
+	}
+	if (rc == 0) {
+		rc = cpt_dynp(&cost, n, 2, 2, budget, &b, err);
+		cpt_bkps_free(&b);
+	}
+	if (rc == 0) {
+		cpt_crops_entry *entries = NULL;
+		int64_t count = 0;
+		rc = cpt_crops(&cost, n, 0.1, 500, 1, budget, &entries, &count, err);
+		cpt_crops_free(entries, count);
+	}
+	cpt_cost_destroy(&cost);
+	return rc;
+}
+
+static void make_counts(double *x, int64_t n) {
+	for (int64_t i = 0; i < n; i++) {
+		x[i] = floor(2.0 + (i / 15 % 3) * 4.0 + 2.0 * (1.0 + sin((double)i * 1.7)));
+	}
+}
+
+#ifdef CPT_FAULT_INJECTION
+// The k-th allocation fails, for every k until a run completes without hitting the failure.
+static int test_out_of_memory(void) {
+	double x[60];
+	make_counts(x, 60);
+	char err[CPT_ERR_LEN];
+	int checks = 0;
+	for (int kind = 0; kind < 4; kind++) {
+		for (long k = 1;; k++) {
+			cpt_fail_countdown = k;
+			err[0] = 0;
+			int rc = run_all((cpt_cost_kind)kind, x, 60, NULL, err);
+			long left = cpt_fail_countdown;
+			cpt_fail_countdown = 0;
+			if (left > 0) {
+				CHECK(rc == 0, "cost %d: run without injected failure failed: %s", kind, err);
+				break; // every allocation of the run has been failed once
+			}
+			CHECK(rc == 1 && strstr(err, "out of memory"), "cost %d, allocation %ld: rc=%d err=%s", kind, k, rc,
+			      err);
+			checks++;
+		}
+	}
+	return checks;
+}
+#endif
+
+// Work limits of every size: each run either finishes or stops with CPT_BUDGET_EXCEEDED.
+static int test_budgets(void) {
+	double x[60];
+	make_counts(x, 60);
+	char err[CPT_ERR_LEN];
+	int checks = 0;
+	for (int kind = 0; kind < 4; kind++) {
+		for (int64_t limit = 1; limit < 1000000; limit = limit * 3 + 1) {
+			cpt_budget budget = {limit, 0};
+			int rc = run_all((cpt_cost_kind)kind, x, 60, &budget, err);
+			CHECK(rc == 0 || (rc == CPT_BUDGET_EXCEEDED && strstr(err, "work limit")), "cost %d, limit %lld: rc=%d %s",
+			      kind, (long long)limit, rc, err);
+			checks++;
+		}
+	}
+	return checks;
+}
+
+static int test_invalid_arguments(void) {
+	char err[CPT_ERR_LEN];
+	cpt_cost cost;
+	int checks = 0;
+	CHECK(cpt_cost_create((cpt_cost_kind)99, NULL, 0, &cost, err) == 1 && strstr(err, "unknown cost"),
+	      "unknown cost kind accepted");
+	checks++;
+	// rejected before the series is read, so no data is needed
+	CHECK(cpt_cost_create(CPT_COST_L1, NULL, (int64_t)UINT32_MAX, &cost, err) == 1 && strstr(err, "at most"),
+	      "l1 accepted a series longer than its index supports");
+	checks++;
+	double x[8] = {0, 0, 0, 0, 9, 9, 9, 9};
+	cpt_bkps b;
+	if (cpt_cost_create(CPT_COST_L2, x, 8, &cost, err) == 0) {
+		CHECK(cpt_dynp(&cost, 8, -1, 1, NULL, &b, err) == 1 && strstr(err, "n_bkps must be >= 0"),
+		      "dynp accepted n_bkps = -1");
+		checks++;
+		cpt_cost_destroy(&cost);
+	}
+	CHECK(cpt_penalty_parse("SIC", 3) == CPT_PEN_BIC && cpt_penalty_parse("hqc", 3) == -1, "penalty names");
+	checks++;
+	return checks;
+}
+
 int main(void) {
 	const char *names[] = {"l2", "normal", "poisson", "l1"};
 	char err[CPT_ERR_LEN];
@@ -261,6 +381,11 @@ int main(void) {
 		free(x);
 	}
 	checks += test_extreme_arguments();
+	checks += test_budgets();
+	checks += test_invalid_arguments();
+#ifdef CPT_FAULT_INJECTION
+	checks += test_out_of_memory();
+#endif
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? 1 : 0;
 }

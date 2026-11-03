@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Code restructured into small, single-purpose functions: every C function now has CRAP < 10
+  (`make crap`, checked in CI; previously 11 functions were at or above 10, the worst at 35).
+- Out-of-memory paths are tested by fault injection in `test_core`, and checked for leaks.
+- Clearer error when `cpt_crops` gets a NULL `pen_min` or `pen_max`.
+
 ## 0.1.0 (2026-11-02)
 
 First release.

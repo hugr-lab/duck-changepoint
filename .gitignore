@@ -7,3 +7,4 @@ duckdb_unittest_tempdir
 venv.venv
 __pycache__/
 workspace/
+.metrics/

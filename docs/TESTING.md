@@ -10,6 +10,7 @@
 | Optimality | `make check_optimality` | manual | PELT vs unpruned O(n²) Optimal Partitioning, all costs, min_size 1–5, value penalties and MBIC |
 | Leaks (dynamic) | `make leak_check` | manual (macOS) | every SQL function incl. error paths, and the core tests, under `leaks --atExit` |
 | Leaks (static) | `make joern_leaks` | manual | Joern audit: every allocation and `duckdb_create_*` is released, returned or struct-owned |
+| CRAP | `make crap` | yes (CI) | every C function in `src/` has CRAP < 10 (complexity from lizard, coverage from llvm-cov over all the tests above) |
 | Benchmark | `make bench` | manual | l2 PELT at n = 1e4, 1e5, 1e6 |
 | R changepoint | `make test` in `duck-changepoint-reference` | manual | Nile, Lai2005fig4, wave.c44137, ftse100 |
 
@@ -40,6 +41,24 @@ them out of this repository keeps it MIT-only. That repository's `make test` run
 `test/sql/cpt_reference.test` against a cpt build (by default `../duck-changepoint/build/release/`)
 and summarises what it checks: exact matches on Nile and Lai2005fig4, and on wave.c44137 and ftse100
 a penalised cost no higher than changepoint's (whose pruning ignores minseglen).
+
+## Out-of-memory paths
+
+Allocation in `src/core` goes through `cpt_malloc`, `cpt_calloc` and `cpt_realloc`
+(`src/include/cpt_alloc.h`), which are plain libc calls in normal builds. `test_core` is built with
+`-DCPT_FAULT_INJECTION`. For every cost, it makes the 1st, 2nd, 3rd, … allocation of a run through all
+algorithms fail, until a run completes without a failure. Every injected failure must give an "out of
+memory" error. ASan and LSan (Linux CI) and macOS `leaks` (`make leak_check`) check that each of
+these paths frees what it had allocated.
+
+## CRAP
+
+`make crap` (`tools/crap/crap.py`) scores every C function with CRAP = CC² × (1 − coverage)³ + CC.
+Complexity comes from lizard (via `uvx`). Coverage is clang source-based region coverage from
+`test_core` (with fault injection), `test_threads`, and the SQL tests on a coverage build of the
+extension. The run fails with exit code 2 when a function scores 10 or more; CI runs it on macOS. A
+function with complexity 10 or more can never pass, however well tested, so keep functions small: see
+DEVELOPMENT.md.
 
 ## Concurrency
 

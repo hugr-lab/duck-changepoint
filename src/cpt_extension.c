@@ -70,19 +70,31 @@ cpt_budget cpt_function_budget(duckdb_function_info info) {
 	return budget;
 }
 
+// What to try instead when a function hits the work limit.
+static const char *budget_hint(const char *function) {
+	static const char *const PELT = " PELT approaches O(n^2) on long series with few change points; cpt_binseg "
+	                                "is O(n log n).";
+	static const struct {
+		const char *function;
+		const char *hint;
+	} HINTS[] = {{"cpt_pelt", PELT},
+	             {"cpt_crops", PELT},
+	             {"cpt_dynp", " cpt_dynp is O(n_bkps * n^2); cpt_pelt or cpt_binseg scale better."}};
+	for (size_t i = 0; i < sizeof(HINTS) / sizeof(HINTS[0]); i++) {
+		if (strcmp(function, HINTS[i].function) == 0) {
+			return HINTS[i].hint;
+		}
+	}
+	return "";
+}
+
 void cpt_report_error(duckdb_function_info info, const char *function, int rc, const char *err) {
 	char msg[CPT_ERR_LEN * 3];
 	if (rc == CPT_BUDGET_EXCEEDED) {
-		const char *hint = "";
-		if (strcmp(function, "cpt_pelt") == 0 || strcmp(function, "cpt_crops") == 0) {
-			hint = " PELT approaches O(n^2) on long series with few change points; cpt_binseg is O(n log n).";
-		} else if (strcmp(function, "cpt_dynp") == 0) {
-			hint = " cpt_dynp is O(n_bkps * n^2); cpt_pelt or cpt_binseg scale better.";
-		}
 		snprintf(msg, sizeof(msg),
 		         "%s: %s. A running cpt_* call cannot be interrupted, so its work is capped by "
 		         "SET " CPT_MAX_EVALUATIONS_SETTING " (0 = no limit).%s",
-		         function, err, hint);
+		         function, err, budget_hint(function));
 	} else {
 		snprintf(msg, sizeof(msg), "%s", err);
 	}
@@ -110,12 +122,18 @@ bool cpt_add_overload(duckdb_scalar_function_set set, const char *name, duckdb_l
 	return ok;
 }
 
+static bool (*const REGISTRATIONS[])(duckdb_connection) = {
+    cpt_register_settings, cpt_register_pelt,  cpt_register_binseg,
+    cpt_register_dynp,     cpt_register_crops, cpt_register_segment_stats,
+};
+
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection, duckdb_extension_info info,
                             struct duckdb_extension_access *access) {
-	if (!cpt_register_settings(connection) || !cpt_register_pelt(connection) || !cpt_register_binseg(connection) ||
-	    !cpt_register_dynp(connection) || !cpt_register_crops(connection) || !cpt_register_segment_stats(connection)) {
-		access->set_error(info, "cpt: failed to register functions");
-		return false;
+	for (size_t i = 0; i < sizeof(REGISTRATIONS) / sizeof(REGISTRATIONS[0]); i++) {
+		if (!REGISTRATIONS[i](connection)) {
+			access->set_error(info, "cpt: failed to register functions");
+			return false;
+		}
 	}
 	return true;
 }

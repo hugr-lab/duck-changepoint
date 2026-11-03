@@ -131,6 +131,83 @@ SELECT cpt_segment_stats([1.0, 2.0, 3.0], [2, 2, 3])
 ----
 must be strictly increasing
 
+# --- argument validation of every function (each error path of the SQL layer) ---------------
+
+statement error
+SELECT cpt_binseg([1.0, 2, 3], 'l2', -1)
+----
+n_bkps must be >= 0, got -1
+
+statement error
+SELECT cpt_binseg([1.0, 2, 3], 'l2', NULL, -1.0)
+----
+penalty must be a finite number >= 0, got -1
+
+statement error
+SELECT cpt_binseg([1.0, 2, 3], 'l2', 1, NULL, 0)
+----
+min_size must be >= 1, got 0
+
+statement error
+SELECT cpt_binseg([1.0, 2.5], 'poisson')
+----
+cost 'poisson' requires non-negative integer values; element 2 is 2.5
+
+statement error
+SELECT cpt_dynp([1.0, 2, 3], -1)
+----
+n_bkps must be >= 0, got -1
+
+statement error
+SELECT cpt_dynp([1.0, 2, 3], 1, 'l2', 0)
+----
+min_size must be >= 1, got 0
+
+statement error
+SELECT cpt_dynp([1.0, 2.5], 1, 'poisson')
+----
+cost 'poisson' requires non-negative integer values
+
+statement error
+SELECT cpt_crops([1.0, 2, 3], 'l2', 1, 2, 0)
+----
+min_size must be >= 1, got 0
+
+statement error
+SELECT cpt_crops([1.0, 2.5], 'poisson', 1, 2)
+----
+cost 'poisson' requires non-negative integer values
+
+statement error
+SELECT cpt_crops([1.0, 2, 3], 'l2', NULL, 2)
+----
+cpt_crops: pen_min must not be NULL
+
+statement error
+SELECT cpt_crops([1.0, 2, 3], 'l2', 1, 'inf'::DOUBLE)
+----
+pen_max must be a finite number >= 0, got inf
+
+statement error
+SELECT cpt_pelt([1.0, 2, 3], 'l2', 'nan'::DOUBLE)
+----
+penalty must be a finite number >= 0, got nan
+
+statement error
+SELECT cpt_segment_stats([1.0, 2, 3], [1, NULL, 3])
+----
+cpt_segment_stats: bkps contains a NULL
+
+statement error
+SELECT cpt_segment_stats([1.0, NULL, 3], [3])
+----
+series contains a NULL at position 2
+
+statement error
+SELECT cpt_segment_stats([]::DOUBLE[], [1])
+----
+bkps must be empty for an empty series
+
 # --- overloads and NULL meaning "default" ----------------------------------------------------
 
 # cost is case-insensitive; NULL cost means 'l2'; NULL penalty means BIC; NULL min_size means 1

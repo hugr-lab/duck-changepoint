@@ -15,6 +15,26 @@ void cpt_set_row_null(duckdb_vector vec, idx_t row) {
 	duckdb_validity_set_row_invalid(duckdb_vector_get_validity(vec), row);
 }
 
+int64_t cpt_first_null(duckdb_vector child, uint64_t offset, uint64_t length) {
+	uint64_t *validity = duckdb_vector_get_validity(child);
+	for (uint64_t i = 0; validity && i < length; i++) {
+		if (!duckdb_validity_row_is_valid(validity, offset + i)) {
+			return (int64_t)i;
+		}
+	}
+	return -1;
+}
+
+// Index of the first NaN or +-inf, or -1 (written without isfinite to avoid libm in this unit).
+static int64_t first_non_finite(const double *x, int64_t n) {
+	for (int64_t i = 0; i < n; i++) {
+		if (x[i] != x[i] || x[i] - x[i] != 0) {
+			return i;
+		}
+	}
+	return -1;
+}
+
 int cpt_read_series(duckdb_vector list_vec, idx_t row, const double **x, int64_t *n, char *err) {
 	duckdb_list_entry entry = ((duckdb_list_entry *)duckdb_vector_get_data(list_vec))[row];
 	if (entry.length > (uint64_t)INT32_MAX) {
@@ -23,25 +43,17 @@ int cpt_read_series(duckdb_vector list_vec, idx_t row, const double **x, int64_t
 		return 1;
 	}
 	duckdb_vector child = duckdb_list_vector_get_child(list_vec);
-	uint64_t *validity = duckdb_vector_get_validity(child);
-	if (validity) {
-		for (idx_t i = 0; i < entry.length; i++) {
-			if (!duckdb_validity_row_is_valid(validity, entry.offset + i)) {
-				snprintf(err, CPT_ERR_LEN, "series contains a NULL at position %llu",
-				         (unsigned long long)i + 1);
-				return 1;
-			}
-		}
+	int64_t null_at = cpt_first_null(child, entry.offset, entry.length);
+	if (null_at >= 0) {
+		snprintf(err, CPT_ERR_LEN, "series contains a NULL at position %lld", (long long)null_at + 1);
+		return 1;
 	}
-	const double *data = (const double *)duckdb_vector_get_data(child);
-	*x = entry.length ? data + entry.offset : NULL;
+	*x = entry.length ? (const double *)duckdb_vector_get_data(child) + entry.offset : NULL;
 	*n = (int64_t)entry.length;
-	for (int64_t i = 0; i < *n; i++) {
-		double v = (*x)[i];
-		if (v != v || v - v != 0) { // NaN or +-inf, without relying on isfinite in this unit
-			snprintf(err, CPT_ERR_LEN, "series contains a non-finite value at position %lld", (long long)i + 1);
-			return 1;
-		}
+	int64_t bad = first_non_finite(*x, *n);
+	if (bad >= 0) {
+		snprintf(err, CPT_ERR_LEN, "series contains a non-finite value at position %lld", (long long)bad + 1);
+		return 1;
 	}
 	return 0;
 }
@@ -52,42 +64,32 @@ void cpt_read_varchar(duckdb_vector vec, idx_t row, const char **data, size_t *l
 	*data = duckdb_string_t_data(&strings[row]);
 }
 
+bool cpt_arg_present(duckdb_data_chunk input, idx_t col, idx_t row) {
+	return col < duckdb_data_chunk_get_column_count(input) &&
+	       cpt_row_is_valid(duckdb_data_chunk_get_vector(input, col), row);
+}
+
+static void *arg_data(duckdb_data_chunk input, idx_t col) {
+	return duckdb_vector_get_data(duckdb_data_chunk_get_vector(input, col));
+}
+
 int64_t cpt_arg_bigint(duckdb_data_chunk input, idx_t col, idx_t row, int64_t def) {
-	if (col >= duckdb_data_chunk_get_column_count(input)) {
-		return def;
-	}
-	duckdb_vector vec = duckdb_data_chunk_get_vector(input, col);
-	if (!cpt_row_is_valid(vec, row)) {
-		return def;
-	}
-	return ((int64_t *)duckdb_vector_get_data(vec))[row];
+	return cpt_arg_present(input, col, row) ? ((int64_t *)arg_data(input, col))[row] : def;
 }
 
 double cpt_arg_double(duckdb_data_chunk input, idx_t col, idx_t row, double def, bool *is_null) {
-	*is_null = true;
-	if (col >= duckdb_data_chunk_get_column_count(input)) {
-		return def;
-	}
-	duckdb_vector vec = duckdb_data_chunk_get_vector(input, col);
-	if (!cpt_row_is_valid(vec, row)) {
-		return def;
-	}
-	*is_null = false;
-	return ((double *)duckdb_vector_get_data(vec))[row];
+	*is_null = !cpt_arg_present(input, col, row);
+	return *is_null ? def : ((double *)arg_data(input, col))[row];
 }
 
 int cpt_arg_cost(duckdb_data_chunk input, idx_t col, idx_t row, cpt_cost_kind *kind, char *err) {
 	*kind = CPT_COST_L2;
-	if (col >= duckdb_data_chunk_get_column_count(input)) {
-		return 0;
-	}
-	duckdb_vector vec = duckdb_data_chunk_get_vector(input, col);
-	if (!cpt_row_is_valid(vec, row)) {
+	if (!cpt_arg_present(input, col, row)) {
 		return 0;
 	}
 	const char *name;
 	size_t len;
-	cpt_read_varchar(vec, row, &name, &len);
+	cpt_read_varchar(duckdb_data_chunk_get_vector(input, col), row, &name, &len);
 	int parsed = cpt_cost_parse(name, len);
 	if (parsed < 0) {
 		snprintf(err, CPT_ERR_LEN, "unknown cost '%.*s'; expected one of 'l2', 'normal', 'poisson', 'l1'",

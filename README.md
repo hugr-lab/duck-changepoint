@@ -310,6 +310,7 @@ make check_optimality   # PELT against unpruned Optimal Partitioning
 make bench              # timings above
 make leak_check         # every function under macOS `leaks` (needs `brew install duckdb`)
 make joern_leaks        # static allocation/release audit with Joern
+make crap               # CRAP < 10 for every C function (lizard + llvm-cov)
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) and [docs/TESTING.md](docs/TESTING.md).

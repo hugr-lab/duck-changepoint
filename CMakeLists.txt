@@ -41,6 +41,7 @@ set(EXTENSION_SOURCES
         src/core/algo.c
         # SQL surface: vector I/O and function registration
         src/functions/list_io.c
+        src/functions/cpt_call.c
         src/functions/cpt_pelt.c
         src/functions/cpt_binseg.c
         src/functions/cpt_dynp.c

@@ -9,8 +9,10 @@ src/
 │   └── algo.c               PELT, Binseg, Dynp, CROPS, penalties
 ├── functions/               SQL surface: one file per SQL function
 │   ├── list_io.c            reading LIST/VARCHAR/optional args, writing LIST(INTEGER)
+│   ├── cpt_call.c           the shared row loop: prepare args and cost, run, write, report errors
 │   ├── cpt_pelt.c  cpt_binseg.c  cpt_dynp.c  cpt_crops.c  cpt_segment_stats.c
-└── include/                 cost.h, algo.h, list_io.h, cpt_functions.h
+└── include/                 cost.h, algo.h, list_io.h, cpt_functions.h, cpt_call.h,
+                             cpt_alloc.h (allocation wrappers), cpt_text.h
 duckdb_capi/                 duckdb.h + duckdb_extension.h from DuckDB v1.5.6 (TARGET_DUCKDB_VERSION)
 extension-ci-tools/          submodule: Makefiles, metadata footer script, CI workflows
 ```
@@ -36,10 +38,11 @@ typedef struct cpt_cost {
 
 To add a cost:
 
-1. Write `init`/`eval`/`free` (in `cost.c`, or in a new file for anything sizeable).
-2. Add a `cpt_cost_kind` and a name in `cpt_cost_parse`.
-3. Fill the struct in `cpt_cost_create`, state in a comment why K is valid, and set `eval_weight`
-   to the cost of one `eval` relative to an O(1) evaluation (it scales `cpt_max_evaluations`).
+1. Write `alloc`/`init`/`eval`/`free` (in `cost.c`, or in a new file for anything sizeable), allocating
+   with `cpt_malloc` and friends.
+2. Add a `cpt_cost_kind` and a row to `COST_SPECS` in `cost.c`: name, functions, `n_params`, `min_len`
+   and `eval_weight`, the cost of one `eval` relative to an O(1) evaluation, which scales
+   `cpt_max_evaluations`. State in a comment why K = 0 (or another K) is valid.
 4. Add a naive evaluation to `test/c/test_core.c` and to `test/python/check_optimality.py`.
 
 ## DuckDB C API usage

@@ -1,5 +1,8 @@
 #include "cost.h"
 
+#include "cpt_alloc.h"
+#include "cpt_text.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +21,7 @@ typedef struct {
 } prefix_ctx;
 
 static void *prefix_alloc(void) {
-	return calloc(1, sizeof(prefix_ctx));
+	return cpt_calloc(1, sizeof(prefix_ctx));
 }
 
 static void prefix_free(void *ctx) {
@@ -31,21 +34,23 @@ static void prefix_free(void *ctx) {
 	free(c);
 }
 
+static double mean_of(const double *x, int64_t n) {
+	double sum = 0;
+	for (int64_t i = 0; i < n; i++) {
+		sum += x[i];
+	}
+	return n > 0 ? sum / (double)n : 0;
+}
+
 static int prefix_init(prefix_ctx *c, const double *x, int64_t n, int centre, char *err) {
 	c->n = n;
-	c->s1 = (double *)malloc(sizeof(double) * (size_t)(n + 1));
-	c->s2 = (double *)malloc(sizeof(double) * (size_t)(n + 1));
+	c->s1 = (double *)cpt_malloc(sizeof(double) * (size_t)(n + 1));
+	c->s2 = (double *)cpt_malloc(sizeof(double) * (size_t)(n + 1));
 	if (!c->s1 || !c->s2) {
 		snprintf(err, CPT_ERR_LEN, "out of memory allocating prefix sums for n = %lld", (long long)n);
-		return 1;
+		return 1; // the caller frees the context, and with it whichever array was allocated
 	}
-	double shift = 0;
-	if (centre && n > 0) {
-		for (int64_t i = 0; i < n; i++) {
-			shift += x[i];
-		}
-		shift /= (double)n;
-	}
+	double shift = centre ? mean_of(x, n) : 0;
 	c->s1[0] = 0;
 	c->s2[0] = 0;
 	for (int64_t i = 0; i < n; i++) {
@@ -92,19 +97,20 @@ static double normal_eval(void *ctx, int64_t a, int64_t b) {
 	const prefix_ctx *c = (const prefix_ctx *)ctx;
 	double len = (double)(b - a);
 	double var = prefix_ss(c, a, b) / len;
-	if (var < CPT_NORMAL_VAR_FLOOR) {
-		var = CPT_NORMAL_VAR_FLOOR;
-	}
-	return len * log(var);
+	return len * log(var < CPT_NORMAL_VAR_FLOOR ? CPT_NORMAL_VAR_FLOOR : var);
 }
 
 //===--------------------------------------------------------------------===//
 // poisson: -2 * (S ln(S/len) - S), S = segment sum
 //===--------------------------------------------------------------------===//
 
+static int is_count(double v) {
+	return v >= 0 && v == floor(v) && !isinf(v);
+}
+
 static int poisson_init(void *ctx, const double *x, int64_t n, char *err) {
 	for (int64_t i = 0; i < n; i++) {
-		if (!(x[i] >= 0) || x[i] != floor(x[i]) || isinf(x[i])) {
+		if (!is_count(x[i])) {
 			snprintf(err, CPT_ERR_LEN,
 			         "cost 'poisson' requires non-negative integer values; element %lld is %g", (long long)i + 1,
 			         x[i]);
@@ -125,91 +131,76 @@ static double poisson_eval(void *ctx, int64_t a, int64_t b) {
 }
 
 //===--------------------------------------------------------------------===//
-// Factory
+// Factory: one descriptor per cost
 //===--------------------------------------------------------------------===//
 
+typedef struct {
+	const char *name;
+	void *(*alloc)(void);
+	int (*init)(void *ctx, const double *x, int64_t n, char *err);
+	double (*eval)(void *ctx, int64_t a, int64_t b);
+	void (*free)(void *ctx);
+	int n_params;
+	int64_t min_len;
+	int64_t eval_weight; // 0: log2(n), one O(1) step per level of the l1 index
+} cost_spec;
+
+// K = 0 for every cost: each is a minimum over segment parameters of a sum of per-point terms, so
+// splitting a segment cannot raise the cost, C(a,s) + C(s,b) <= C(a,b) (Killick, Fearnhead & Eckley
+// 2012, Theorem 3.1). For l1 each half picks its own median.
+static const cost_spec COST_SPECS[] = {
+    [CPT_COST_L2] = {"l2", prefix_alloc, l2_init, l2_eval, prefix_free, 1, 1, 1},
+    // sigma_hat^2 of one point is 0, and log() makes an evaluation about twice as expensive as l2
+    [CPT_COST_NORMAL] = {"normal", prefix_alloc, normal_init, normal_eval, prefix_free, 2, 2, 2},
+    [CPT_COST_POISSON] = {"poisson", prefix_alloc, poisson_init, poisson_eval, prefix_free, 1, 1, 1},
+    [CPT_COST_L1] = {"l1", cpt_cost_l1_alloc, cpt_cost_l1_init, cpt_cost_l1_eval, cpt_cost_l1_free, 1, 1, 0},
+};
+
+#define N_COSTS ((int)(sizeof(COST_SPECS) / sizeof(COST_SPECS[0])))
+
+static int64_t log2_ceil(int64_t n) {
+	int64_t w = 1;
+	while (((int64_t)1 << w) < n) {
+		w++;
+	}
+	return w;
+}
+
+static const cost_spec *cost_spec_of(cpt_cost_kind kind) {
+	return ((int)kind >= 0 && (int)kind < N_COSTS) ? &COST_SPECS[kind] : NULL;
+}
+
+static cpt_cost cost_from_spec(const cost_spec *spec, int64_t n) {
+	cpt_cost cost = {0};
+	cost.name = spec->name;
+	cost.ctx = spec->alloc();
+	cost.init = spec->init;
+	cost.eval = spec->eval;
+	cost.n_params = spec->n_params;
+	cost.K = 0;
+	cost.min_len = spec->min_len;
+	cost.eval_weight = spec->eval_weight ? spec->eval_weight : log2_ceil(n);
+	cost.free = spec->free;
+	return cost;
+}
+
 int cpt_cost_parse(const char *name, size_t len) {
-	static const struct {
-		const char *name;
-		cpt_cost_kind kind;
-	} names[] = {{"l2", CPT_COST_L2},
-	             {"normal", CPT_COST_NORMAL},
-	             {"poisson", CPT_COST_POISSON},
-	             {"l1", CPT_COST_L1}};
-	for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
-		const char *candidate = names[i].name;
-		if (strlen(candidate) != len) {
-			continue;
-		}
-		size_t j = 0;
-		while (j < len) {
-			char ch = name[j];
-			if (ch >= 'A' && ch <= 'Z') {
-				ch = (char)(ch - 'A' + 'a');
-			}
-			if (ch != candidate[j]) {
-				break;
-			}
-			j++;
-		}
-		if (j == len) {
-			return (int)names[i].kind;
+	for (int i = 0; i < N_COSTS; i++) {
+		if (cpt_ascii_ieq(name, len, COST_SPECS[i].name)) {
+			return i;
 		}
 	}
 	return -1;
 }
 
 int cpt_cost_create(cpt_cost_kind kind, const double *x, int64_t n, cpt_cost *out, char *err) {
+	const cost_spec *spec = cost_spec_of(kind);
 	memset(out, 0, sizeof(*out));
-	out->K = 0;
-	out->min_len = 1;
-	out->eval_weight = 1;
-	switch (kind) {
-	case CPT_COST_L2:
-		out->name = "l2";
-		out->ctx = prefix_alloc();
-		out->init = l2_init;
-		out->eval = l2_eval;
-		out->n_params = 1;
-		out->free = prefix_free;
-		break;
-	case CPT_COST_NORMAL:
-		out->name = "normal";
-		out->ctx = prefix_alloc();
-		out->init = normal_init;
-		out->eval = normal_eval;
-		out->n_params = 2;
-		out->min_len = 2; // sigma_hat^2 of a single point is 0
-		out->eval_weight = 2; // log() makes an evaluation about twice as expensive as l2
-		out->free = prefix_free;
-		break;
-	case CPT_COST_POISSON:
-		out->name = "poisson";
-		out->ctx = prefix_alloc();
-		out->init = poisson_init;
-		out->eval = poisson_eval;
-		out->n_params = 1;
-		out->free = prefix_free;
-		break;
-	case CPT_COST_L1:
-		// Pruning: C(a,b) = min_m sum |x_i - m| over [a,b). Splitting [a,b) at s lets each half pick
-		// its own median, so C(a,s) + C(s,b) <= C(a,b) and the assumption of Killick, Fearnhead &
-		// Eckley (2012), Theorem 3.1, holds with K = 0.
-		out->name = "l1";
-		out->ctx = cpt_cost_l1_alloc();
-		out->init = cpt_cost_l1_init;
-		out->eval = cpt_cost_l1_eval;
-		out->n_params = 1;
-		out->free = cpt_cost_l1_free;
-		// one O(1) step per wavelet-matrix level
-		while (((int64_t)1 << out->eval_weight) < n) {
-			out->eval_weight++;
-		}
-		break;
-	default:
+	if (!spec) {
 		snprintf(err, CPT_ERR_LEN, "unknown cost");
 		return 1;
 	}
+	*out = cost_from_spec(spec, n);
 	if (!out->ctx) {
 		snprintf(err, CPT_ERR_LEN, "out of memory");
 		return 1;

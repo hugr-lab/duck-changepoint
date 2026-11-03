@@ -42,7 +42,7 @@ make release test_release test_core
 ```
 
 Before a release, also run `make test_compat compare_ruptures check_optimality bench leak_check
-joern_leaks`, and
+joern_leaks crap`, and
 `make test` in the companion `duck-changepoint-reference` repository (R changepoint comparison).
 
 ## Code conventions
@@ -54,6 +54,15 @@ joern_leaks`, and
   `duckdb_scalar_function_set_error`. Allocation failures are reported, not ignored.
 - No per-iteration allocation in algorithm loops; workspaces are allocated once per call.
 - Every new cost or algorithm needs a brute-force counterpart in `test/c/test_core.c`.
+- Allocate in `src/core` with `cpt_malloc` / `cpt_calloc` / `cpt_realloc` (`cpt_alloc.h`), so that
+  `test_core`'s fault injection covers the out-of-memory path.
+- Keep every function at CRAP < 10 (`make crap`, checked in CI). In practice that means cyclomatic
+  complexity below 10 and tests for every branch. Prefer small functions that compute a value from their
+  arguments (`binseg_pick`, `binseg_done`, `segment_moments`), explicit workspace structs with alloc/free
+  pairs, and descriptor tables (`COST_SPECS`, `REGISTRATIONS`) over `switch` chains.
+- SQL functions that return segment ends supply a `cpt_bkps_algorithm` to `cpt_execute_bkps`
+  (`cpt_call.h`), which owns the row loop, NULL handling, cost creation, the work limit and error
+  reporting.
 
 ## Layout
 

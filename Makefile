@@ -1,4 +1,4 @@
-.PHONY: clean clean_all bench compare_ruptures check_optimality test_compat test_core test_threads leak_check joern_leaks help
+.PHONY: clean clean_all bench compare_ruptures check_optimality test_compat test_core test_threads leak_check joern_leaks crap help
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -49,11 +49,13 @@ check_optimality: release
 	$(PYTHON_VENV_BIN) test/python/check_optimality.py build/release/$(EXTENSION_NAME).duckdb_extension
 
 # Standalone C tests of src/core under AddressSanitizer + UndefinedBehaviorSanitizer (no DuckDB needed).
+# CPT_FAULT_INJECTION lets the test fail every allocation in turn (src/include/cpt_alloc.h).
 CORE_TEST_BIN := build/test_core
 test_core:
 	@mkdir -p build
 	$(CC) -std=c11 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
-		-Wall -Wextra -Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c src/core/algo.c -lm -o $(CORE_TEST_BIN)
+		-Wall -Wextra -DCPT_FAULT_INJECTION -Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c \
+		src/core/algo.c -lm -o $(CORE_TEST_BIN)
 	$(CORE_TEST_BIN)
 
 # Concurrency test of src/core under ThreadSanitizer: 8 threads run every algorithm on series from one
@@ -74,8 +76,8 @@ leak_check: debug
 	@mkdir -p build
 	$(CC) -std=c11 -g -O1 -Iduckdb_capi test/leak/leak_host.c -L$(DUCKDB_LIB_DIR) -lduckdb \
 		-Wl,-rpath,$(DUCKDB_LIB_DIR) -o build/leak_host
-	$(CC) -std=c11 -g -O1 -Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c src/core/algo.c \
-		-lm -o build/test_core_plain
+	$(CC) -std=c11 -g -O1 -DCPT_FAULT_INJECTION -Isrc/include test/c/test_core.c src/core/cost.c \
+		src/core/cost_l1.c src/core/algo.c -lm -o build/test_core_plain
 	MallocStackLogging=1 leaks --atExit -- build/leak_host build/debug/$(EXTENSION_NAME).duckdb_extension \
 		$(LEAK_ITERATIONS) > build/leaks_extension.txt 2>&1 || (tail -60 build/leaks_extension.txt; exit 1)
 	@grep -E "iterations|leaks for" build/leaks_extension.txt
@@ -89,6 +91,11 @@ joern_leaks:
 	@mkdir -p build/joern
 	joern-parse src --output build/joern/cpg.bin
 	joern --script tools/joern/leaks.sc --param cpgFile=build/joern/cpg.bin; rc=$$?; rm -rf workspace; exit $$rc
+
+# CRAP score of every C function in src/ (complexity from lizard, coverage from llvm-cov over test_core,
+# test_threads and the SQL tests). Exit 2 when any function scores CRAP >= 10.
+crap:
+	$(PYTHON_BIN) tools/crap/crap.py
 
 bench: release
 	$(PYTHON_VENV_BIN) bench/run_bench.py build/release/$(EXTENSION_NAME).duckdb_extension
@@ -108,5 +115,6 @@ help:
 	@echo "make check_optimality - PELT vs unpruned Optimal Partitioning (manual, not CI gating)"
 	@echo "make leak_check       - every SQL function and the core under macOS leaks (needs brew duckdb)"
 	@echo "make joern_leaks      - static allocation/release audit of src/ with Joern"
+	@echo "make crap             - CRAP score per C function (lizard + llvm-cov); fails at CRAP >= 10"
 	@echo "make bench            - l2 PELT runtime for n = 1e4, 1e5, 1e6"
 
