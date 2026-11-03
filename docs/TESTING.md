@@ -8,7 +8,7 @@
 | Concurrency (core) | `make test_threads` | yes (CI) | `test/c/test_threads.c` under ThreadSanitizer: 8 threads run every algorithm on series from one shared buffer and match a single-threaded reference |
 | ruptures cross-check | `make compare_ruptures` | manual | 200 random series: PELT (l2, l1), Binseg (pen, n_bkps), Dynp |
 | Optimality | `make check_optimality` | manual | PELT vs unpruned O(n²) Optimal Partitioning, all costs, min_size 1–5, value penalties and MBIC |
-| Leaks (dynamic) | `make leak_check` | manual (macOS) | every SQL function incl. error paths, and the core tests, under `leaks --atExit` |
+| Leaks (dynamic) | `make leak_check` | yes (CI, macOS) | every SQL function incl. error paths, and the core tests, under `leaks --atExit` |
 | Leaks (static) | `make joern_leaks` | manual | Joern audit: every allocation and `duckdb_create_*` is released, returned or struct-owned |
 | CRAP | `make crap` | yes (CI) | every C function in `src/` has CRAP < 10 (complexity from lizard, coverage from llvm-cov over all the tests above) |
 | Benchmark | `make bench` | manual | l2 PELT at n = 1e4, 1e5, 1e6 |

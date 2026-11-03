@@ -296,21 +296,26 @@ Requirements: CMake ≥ 3.5, a C11 compiler, Python 3 (for the build helpers and
 git clone --recurse-submodules <repo> && cd duck-changepoint
 make configure        # venv with the DuckDB test runner, platform detection
 make release          # build/release/cpt.duckdb_extension
+```
+
+These checks gate CI:
+
+```sh
 make test             # SQL logic tests (debug build) on the latest DuckDB
 make test_compat      # same tests on DuckDB 1.5.6
 make test_core        # C tests of the numerical core under ASan/UBSan
 make test_threads     # the core on 8 threads under ThreadSanitizer
+make leak_check       # every function under macOS `leaks` (needs `brew install duckdb`)
+make crap             # CRAP < 10 for every C function (lizard + llvm-cov)
 ```
 
-These checks are run by hand and do not gate CI:
+These are run by hand:
 
 ```sh
 make compare_ruptures   # 200 random series against ruptures
 make check_optimality   # PELT against unpruned Optimal Partitioning
 make bench              # timings above
-make leak_check         # every function under macOS `leaks` (needs `brew install duckdb`)
 make joern_leaks        # static allocation/release audit with Joern
-make crap               # CRAP < 10 for every C function (lizard + llvm-cov)
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) and [docs/TESTING.md](docs/TESTING.md).
