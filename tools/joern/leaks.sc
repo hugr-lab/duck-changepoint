@@ -43,7 +43,8 @@ def fieldOf(target: String): Option[String] =
         val target = a.target.code.replaceAll("^\\*", "").trim
         val callee = a.source.ast.isCall.name(allocRegex).name.headOption.getOrElse("?")
         val released = m.ast.isCall.name(releaseCalls).argument.code.l.map(stripRef).contains(target)
-        val returned = m.ast.isReturn.ast.isIdentifier.name.l.contains(target)
+        // returned, directly or as an output parameter (`*out = alloc(...)`)
+        val returned = m.ast.isReturn.ast.isIdentifier.name.l.contains(target) || a.target.code.startsWith("*")
         val fieldOwned = fieldOf(target).exists(releasedFields.contains)
         // copied into a released local or field, e.g. the realloc idiom `tmp = realloc(p, n); p = tmp;`
         val releasedInMethod = m.ast.isCall.name(releaseCalls).argument.code.l.map(stripRef).toSet

@@ -1,0 +1,138 @@
+# Online change detection
+
+`cpt_pelt` and the other offline functions look at a whole series at once. The online functions
+watch a stream instead: they take the points as they arrive and raise an alarm as soon as the mean
+has changed.
+
+```sql
+-- a detector, as a value
+SELECT cpt_online_new();                               -- threshold 15, baseline from the first 100 points
+SELECT cpt_online_new(12.0, 500);                      -- threshold 12, baseline from 500 points
+SELECT cpt_online_new(15.0, 20.0, 2.0);                -- threshold 15, known baseline: mean 20, sd 2
+
+-- feed it new points: returns the next state and any alarms
+SELECT cpt_online_update(state, [21.3, 19.8, 24.9]);
+-- {state: <blob>, n: 1203, statistic: 3.1, training: false,
+--  alarms: [{change_at: 1180, detected_at: 1197, shift: 3.0, statistic: 15.6}]}
+
+-- or run a fresh detector over a whole series (backtesting, tuning the threshold)
+SELECT cpt_online(list(value ORDER BY ts)) FROM readings;
+```
+
+| Function | Returns |
+|---|---|
+| `cpt_online_new()`<br>`cpt_online_new(threshold)`<br>`cpt_online_new(threshold, train)`<br>`cpt_online_new(threshold, mean, sd)` | `BLOB` (the detector state) |
+| `cpt_online_update(state BLOB, values DOUBLE[])` | `STRUCT(state BLOB, n BIGINT, statistic DOUBLE, training BOOLEAN, alarms ALARM[])` |
+| `cpt_online(series)`<br>`cpt_online(series, threshold)`<br>`cpt_online(series, threshold, train)`<br>`cpt_online(series, threshold, mean, sd)` | `ALARM[]` |
+
+`ALARM` is `STRUCT(change_at BIGINT, detected_at BIGINT, shift DOUBLE, statistic DOUBLE)`. The fields
+mean:
+- `change_at`: the estimated position of the last point before the change, matching the segment ends
+  of the offline functions.
+- `detected_at`: the position of the point that raised the alarm.
+- `shift`: the estimated change in mean, in the units of the data.
+
+Positions count from 1 since the detector was created, across all updates. `n` is the number of
+points seen. `statistic` is the current value of the test statistic, and an alarm fires when it
+reaches the threshold. `training` is true while the baseline is still being estimated.
+
+The default threshold is 15, and the default `train` is 100 points. `NULL` arguments mean the default.
+A `NULL` list of new values returns `NULL`; a `NULL` element or state is an error.
+
+## Keeping the state in a table
+
+The state is an ordinary value, so it can live in a table and be advanced by any query. Each step takes
+the old state and the new points and returns the new state:
+
+```sql
+CREATE TABLE detector AS SELECT 'sensor-1' AS sensor, cpt_online_new() AS state;
+CREATE TABLE alarms (sensor VARCHAR, change_at BIGINT, detected_at BIGINT, shift DOUBLE, statistic DOUBLE);
+
+-- whenever a batch of new readings has arrived (from the application, a scheduled job, or later a trigger):
+CREATE OR REPLACE TEMP TABLE step AS
+SELECT d.sensor, cpt_online_update(d.state, b.xs) AS r
+FROM detector d JOIN (SELECT sensor, list(value ORDER BY ts) AS xs FROM new_readings GROUP BY sensor) b USING (sensor);
+
+INSERT INTO alarms SELECT sensor, unnest(r.alarms, recursive := true) FROM step;
+UPDATE detector SET state = step.r.state FROM step WHERE detector.sensor = step.sensor;
+```
+
+Splitting the stream does not change the result. Feeding the points in any batches, down to one at a
+time, gives exactly the same alarms as `cpt_online` over the whole series (`test/sql/cpt_online.test`,
+`test/c/test_core.c`). Advancing a state takes about 0.5 ms per `UPDATE`, which is mostly SQL
+overhead, and the state is a few hundred bytes.
+
+DuckDB 2.0 triggers could run the `UPDATE` on every insert. Triggers are still early: they work on
+native DuckDB tables, but not yet on attached sources or DuckLake. The functions do not depend on
+them, so any way of running the step works.
+
+## The detector
+
+The algorithm is FOCuS⁰ (Romano, Eckley, Fearnhead & Rigaill, *JMLR* 24(81), 2023; see the talk in the
+README). The points are standardised with a baseline mean and standard deviation, z = (x − mean) / sd.
+With S_k the running sum of z since the detector last (re)started, the statistic is
+
+    T_k = max over tau < k of (S_k − S_tau)² / (2 (k − tau))
+
+which is the log likelihood ratio of "the mean changed after tau" for the best tau and the best change
+size, in either direction. It equals Page's CUSUM run for every possible change size at once. An alarm
+is raised when T_k reaches the threshold. The detector then restarts:
+- **With `train` > 0** (the default), it estimates a new baseline from the next `train` points, so it
+  follows the stream to its new level.
+- **With a known baseline** (`train` = 0), it restarts against the same baseline. A shift that
+  persists therefore keeps raising alarms every few points until the data returns to the baseline.
+
+**Functional pruning.** As k grows, the cost of every candidate tau, as a function of the change size,
+moves by the same amount. So whether one candidate beats another never changes. The candidates that
+can still win are the corners of the lower convex hull of the points (tau, S_tau) to the right of its
+lowest point, and the same with −S for decreases. On noise about log k of them remain (fewer than 60
+over 200,000 points in the tests). They are kept in a deque: points are added at the back, and
+dominated points are dropped from both ends. A backtest over 1 million points takes about 40 ms.
+On a long steady drift every point stays a corner, so the work per point grows. Each point charges
+its candidates to `cpt_max_evaluations`, as the offline algorithms do.
+
+The statistic is exact: after every point the tests compare it, and every alarm's position, change
+estimate and shift, with a naive recomputation over all candidates (1,402 alarms, all equal).
+
+## Choosing the threshold
+
+The threshold trades false alarms against detection delay. Simulated on N(0, 1) noise, with changes after
+500 in-control points:
+
+| threshold | points per false alarm, known baseline | points per false alarm, baseline from 100–1000 points | delay, 0.5 sd shift | delay, 1 sd | delay, 2 sd |
+|---|---|---|---|---|---|
+| 8 | 2,700 | 2,500 | 50 | 14 | 4 |
+| 10 | 16,500 | 7,000 | 66 | 18 | 5 |
+| 12 | 130,000 | 20,000–60,000 | 82 | 23 | 7 |
+| 14 | 440,000 | 50,000–250,000 | 102 | 26 | 7 |
+| 16 | > 4,000,000 | 60,000–670,000 | 117 | 32 | 8 |
+
+These are averages from a few million simulated points. The false alarm rates with a learned baseline
+vary a lot between runs: alarms are rare, and the baseline's estimation error dominates.
+
+- **An estimated baseline costs false alarms.** 100 points estimate the mean to about ±0.1 sd, and over a
+  long run that offset accumulates like a real shift. A larger `train` helps; a known baseline is best.
+- **Tune the threshold on history with `cpt_online`,** for example by counting alarms on a period that
+  is known to be quiet.
+- **The model assumes independent noise around a level.** Strong autocorrelation or seasonality inflates
+  the statistic. Model it out first, for example with residuals from a moving average, or allow for it
+  with a higher threshold.
+
+## The state BLOB
+
+The state holds:
+- a header: magic `CPTO`, format version 1, the parameters, the baseline, the training progress,
+  positions and sums,
+- then the two candidate lists, 16 bytes per candidate.
+
+It is written in native byte order, which is little-endian on every platform DuckDB builds the extension
+for. `cpt_online_update` validates a state completely before using it: header, counts, positions,
+finiteness and candidate order. Anything else is rejected with "invalid online detector state". Format
+changes will bump the version.
+
+## Not yet
+
+- **A pre-change mean that is unknown and not estimated first.** This is the paper's FOCuS proper, which
+  maximises over the pre-change mean as well.
+- **Changes in variance**, and robust losses for outliers (the paper's R-FOCuS).
+- **Multivariate streams.**

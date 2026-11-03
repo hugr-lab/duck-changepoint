@@ -36,6 +36,9 @@ static const char *ok_queries[] = {
     "SELECT cpt_segment_stats([4, 1, 2, 3]::DOUBLE[], [1, 4])",
     "SELECT cpt_pelt([]::DOUBLE[]), cpt_pelt(NULL::DOUBLE[]), cpt_crops([]::DOUBLE[], 'l2', 1, 2)",
     "SELECT count(*) FROM (SELECT cpt_pelt([0, 0, 0, 5, 5, 5]::DOUBLE[], 'l2', 1.0) FROM range(5000))",
+    "SELECT cpt_online(xs), cpt_online(xs, 8.0, 0.0, 1.0) FROM s",
+    "SELECT cpt_online_update(cpt_online_update(cpt_online_new(8.0, 20), xs[1:150]).state, xs[151:300]) FROM s",
+    "SELECT cpt_online_update(cpt_online_new(), NULL), cpt_online(NULL::DOUBLE[])",
 };
 
 // Queries that must fail: the error path must free everything allocated before the failure.
@@ -51,6 +54,10 @@ static const char *error_queries[] = {
     "SELECT cpt_segment_stats([1.0, 2.0, 3.0], [1, 2])",
     // the error is raised on a later row, after earlier rows wrote output
     "SELECT cpt_pelt(CASE WHEN g = 7 THEN [1.0, 'nan'::DOUBLE] ELSE xs END) FROM s",
+    "SELECT cpt_online_update('garbage'::BLOB, [1.0])",
+    "SELECT cpt_online_update(NULL, [1.0])",
+    "SELECT cpt_online_new(10.0, 1)",
+    "SELECT cpt_online_update(cpt_online_new(), CASE WHEN g = 7 THEN [1.0, NULL] ELSE xs END) FROM s",
 };
 
 static int run(duckdb_connection con, const char *sql, int expect_ok) {
