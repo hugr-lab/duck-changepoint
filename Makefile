@@ -55,7 +55,7 @@ test_core:
 	@mkdir -p build
 	$(CC) -std=c11 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
 		-Wall -Wextra -DCPT_FAULT_INJECTION -Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c \
-		src/core/algo.c src/core/online.c -lm -o $(CORE_TEST_BIN)
+		src/core/algo.c -lm -o $(CORE_TEST_BIN)
 	$(CORE_TEST_BIN)
 
 # Concurrency test of src/core under ThreadSanitizer: 8 threads run every algorithm on series from one
@@ -64,7 +64,7 @@ THREADS_TEST_BIN := build/test_threads
 test_threads:
 	@mkdir -p build
 	$(CC) -std=c11 -g -O1 -fsanitize=thread -fno-omit-frame-pointer -Wall -Wextra -pthread \
-		-Isrc/include test/c/test_threads.c src/core/cost.c src/core/cost_l1.c src/core/algo.c src/core/online.c -lm -o $(THREADS_TEST_BIN)
+		-Isrc/include test/c/test_threads.c src/core/cost.c src/core/cost_l1.c src/core/algo.c -lm -o $(THREADS_TEST_BIN)
 	TSAN_OPTIONS=halt_on_error=1 $(THREADS_TEST_BIN)
 
 # Leak checks (manual). Dynamic: a host program links libduckdb, loads the debug extension and runs
@@ -77,7 +77,7 @@ leak_check: debug
 	$(CC) -std=c11 -g -O1 -Iduckdb_capi test/leak/leak_host.c -L$(DUCKDB_LIB_DIR) -lduckdb \
 		-Wl,-rpath,$(DUCKDB_LIB_DIR) -o build/leak_host
 	$(CC) -std=c11 -g -O1 -DCPT_FAULT_INJECTION -Isrc/include test/c/test_core.c src/core/cost.c \
-		src/core/cost_l1.c src/core/algo.c src/core/online.c -lm -o build/test_core_plain
+		src/core/cost_l1.c src/core/algo.c -lm -o build/test_core_plain
 	MallocStackLogging=1 leaks --atExit -- build/leak_host build/debug/$(EXTENSION_NAME).duckdb_extension \
 		$(LEAK_ITERATIONS) > build/leaks_extension.txt 2>&1 || (tail -60 build/leaks_extension.txt; exit 1)
 	@grep -E "iterations|leaks for" build/leaks_extension.txt

@@ -39,7 +39,6 @@ set(EXTENSION_SOURCES
         src/core/cost.c
         src/core/cost_l1.c
         src/core/algo.c
-        src/core/online.c
         # SQL surface: vector I/O and function registration
         src/functions/list_io.c
         src/functions/cpt_call.c
@@ -48,7 +47,6 @@ set(EXTENSION_SOURCES
         src/functions/cpt_dynp.c
         src/functions/cpt_crops.c
         src/functions/cpt_segment_stats.c
-        src/functions/cpt_online.c
         # Entrypoint
         src/cpt_extension.c
 )

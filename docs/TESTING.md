@@ -23,7 +23,6 @@
 | `cpt_binseg_dynp.test` | binseg = dynp = truth on separable series; stopping rules; dynp ≤ binseg cost |
 | `cpt_crops.test` | sweep covers PELT, ordering, reproducibility, min_size |
 | `cpt_segment_stats.test` | statistics, README examples for labelling rows |
-| `cpt_online.test` | online detector: backtest, chained updates (including one point at a time) equal the backtest, a state table, given baseline, NULLs and errors, work limit |
 | `cpt_limits.test` | `cpt_max_evaluations`: default, error messages per function, l1 weighting, 0 = no limit, RESET |
 | `cpt_threads.test` | 1,000,000 series in 9 row groups: every function and cost on 8 threads gives the same result as on 1 thread |
 | `cpt_talk_examples.test` | the examples in docs/examples-from-talks.md (FOCuS Figure 1, detection delay, Hunter-style benchmark and latency) |
@@ -42,20 +41,6 @@ them out of this repository keeps it MIT-only. That repository's `make test` run
 `test/sql/cpt_reference.test` against a cpt build (by default `../duck-changepoint/build/release/`)
 and summarises what it checks: exact matches on Nile and Lai2005fig4, and on wave.c44137 and ftse100
 a penalised cost no higher than changepoint's (whose pruning ignores minseglen).
-
-## Online detector
-
-`test_core` checks the online detector (`src/core/online.c`) in five ways:
-- **Exactness:** after every point, the statistic, and every alarm's change position and shift, equal
-  a naive recomputation over all candidates (80 random streams, 1,402 alarms).
-- **Pruning:** no more than 60 candidates over 200,000 points of noise.
-- **Training:** the learned baseline matches a two-pass mean and standard deviation.
-- **Split invariance:** feeding in random chunks, with encode/decode after every chunk, gives
-  bit-identical alarms.
-- **State decoding:** every truncation of a valid state is rejected, and 3,000 randomly corrupted
-  states are either rejected or safe to run on (under ASan/UBSan).
-
-The detector also takes part in the fault injection and in the work-limit tests.
 
 ## Out-of-memory paths
 

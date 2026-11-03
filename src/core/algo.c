@@ -65,23 +65,20 @@ static int bkps_backtrack(const int64_t *prev, int64_t n, cpt_bkps *out, char *e
 	return 0;
 }
 
-int cpt_budget_charge(cpt_budget *budget, int64_t units, char *err) {
+// Charge `evals` cost evaluations, weighted by the cost's eval_weight, to the budget. Returns
+// CPT_BUDGET_EXCEEDED (and writes err) once the limit is passed. Called once per outer step, not per
+// evaluation, to keep inner loops tight.
+static int budget_charge(cpt_budget *budget, const cpt_cost *cost, int64_t evals, char *err) {
 	if (!budget) {
 		return 0;
 	}
-	budget->n_evals += units;
+	budget->n_evals += evals * cost->eval_weight;
 	if (budget->max_evals > 0 && budget->n_evals > budget->max_evals) {
 		snprintf(err, CPT_ERR_LEN, "work limit reached after %lld evaluation units (limit %lld)",
 		         (long long)budget->n_evals, (long long)budget->max_evals);
 		return CPT_BUDGET_EXCEEDED;
 	}
 	return 0;
-}
-
-// Charge `evals` cost evaluations, weighted by the cost's eval_weight. Called once per outer step, not
-// per evaluation, to keep inner loops tight.
-static int budget_charge(cpt_budget *budget, const cpt_cost *cost, int64_t evals, char *err) {
-	return cpt_budget_charge(budget, evals * cost->eval_weight, err);
 }
 
 //===--------------------------------------------------------------------===//

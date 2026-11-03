@@ -29,9 +29,6 @@ typedef struct {
 
 #define CPT_BUDGET_EXCEEDED 2
 
-// Charge units of work; returns CPT_BUDGET_EXCEEDED (and writes err) once the limit is passed.
-int cpt_budget_charge(cpt_budget *budget, int64_t units, char *err);
-
 typedef enum { CPT_PEN_VALUE = 0, CPT_PEN_BIC, CPT_PEN_MBIC, CPT_PEN_AIC } cpt_penalty_kind;
 
 typedef struct {

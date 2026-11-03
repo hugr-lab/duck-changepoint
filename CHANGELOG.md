@@ -2,9 +2,6 @@
 
 ## Unreleased
 
-- Online change detection: `cpt_online_new`, `cpt_online_update` and `cpt_online` (FOCuS0, exact
-  Page-CUSUM over every change size, O(log n) per point). The detector state is a BLOB value that can
-  live in a table; feeding in any batches gives the same alarms as one backtest. See docs/online.md.
 - Code restructured into small, single-purpose functions: every C function now has CRAP < 10
   (`make crap`, checked in CI; previously 11 functions were at or above 10, the worst at 35).
 - Out-of-memory paths are tested by fault injection in `test_core`, and checked for leaks.
