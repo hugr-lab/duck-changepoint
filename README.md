@@ -253,6 +253,22 @@ FROM range(1000) t(i);
 -- [250, 500, 750, 1000]
 ```
 
+In a dbt project: [dbt-duckdb-trading-calendar](https://github.com/oluies/dbt-duckdb-trading-calendar#change-point-example-with_changepoint)
+finds volatility regimes in the Riksbank's daily SEK/EUR fixing, indexed on Nasdaq Stockholm trading
+days. Its model collects the daily log returns into a list, runs PELT with the `normal` cost and MBIC,
+and maps segment positions back to dates:
+
+```sql
+SELECT days[seg.start] AS start_date, days[seg."end"] AS end_date,
+       seg.n AS trading_days, sqrt(seg.var * 252) AS annualised_vol_pct
+FROM (SELECT days, unnest(cpt_segment_stats(xs, cpt_pelt(xs, 'normal', 'mbic', 20))) AS seg
+      FROM series);
+```
+
+It finds the COVID sell-off in spring 2020 and the April 2025 tariff shock. The
+[interactive chart](https://oluies.github.io/dbt-duckdb-trading-calendar/) explains each query and
+parameter.
+
 ## Costs
 
 C(a, b) is the cost of the segment of points a+1..b, with length *n* = b − a and segment sum *S*.
