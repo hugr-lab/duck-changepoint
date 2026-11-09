@@ -34,7 +34,15 @@ Further documentation: [docs/online.md](docs/online.md), [docs/examples-from-tal
 
 ## Installation
 
-Build it (see [Building and testing](#building-and-testing)) and load the unsigned binary:
+From the DuckDB community extensions, on DuckDB 2.0:
+
+```sql
+INSTALL cpt FROM community;
+LOAD cpt;
+```
+
+For DuckDB 1.5.6 to 1.5.x, or to run the current source, build it (see
+[Building and testing](#building-and-testing)) and load the unsigned binary:
 
 ```sh
 duckdb -unsigned -c "LOAD 'build/release/cpt.duckdb_extension'; SELECT cpt_pelt([0,0,0,9,9,9]::DOUBLE[], 'l2', 1.0);"
