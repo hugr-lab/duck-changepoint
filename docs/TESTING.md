@@ -11,6 +11,7 @@
 | Leaks (dynamic) | `make leak_check` | yes (CI, macOS) | every SQL function incl. error paths, and the core tests, under `leaks --atExit` |
 | Leaks (static) | `make joern_leaks` | manual | Joern audit: every allocation and `duckdb_create_*` is released, returned or struct-owned |
 | CRAP | `make crap` | yes (CI) | every C function in `src/` has CRAP < 10 (complexity from lizard, coverage from llvm-cov over all the tests above) |
+| CRAP tool self-test | `uvx pytest tools/crap` | manual | the pure functions of `tools/crap/crap.py` (region merging, scoring, the report) |
 | Benchmark | `make bench` | manual | l2 PELT at n = 1e4, 1e5, 1e6 |
 | R changepoint | `make test` in `duck-changepoint-reference` | manual | Nile, Lai2005fig4, wave.c44137, ftse100 |
 
