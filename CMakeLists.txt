@@ -43,7 +43,10 @@ foreach(_target ${EXTENSION_NAME}_extension ${EXTENSION_NAME}_loadable_extension
     # DuckDB statically, and mingw's linker (unlike MSVC's) refuses __imp_ references to static symbols.
     target_compile_definitions(${_target} PRIVATE "DUCKDB_C_API=")
     target_include_directories(${_target} PRIVATE src/include)
+    # Strict C11, as the C API build had (CMAKE_C_EXTENSIONS OFF): with GNU extensions glibc declares names
+    # such as finite() that the sources may use for their own functions.
     set_property(TARGET ${_target} PROPERTY C_STANDARD 11)
+    set_property(TARGET ${_target} PROPERTY C_EXTENSIONS OFF)
     # tools/crap/crap.py instruments only this extension's code, not DuckDB.
     if(CPT_COVERAGE)
         target_compile_options(${_target} PRIVATE -fprofile-instr-generate -fcoverage-mapping -O0 -g)
