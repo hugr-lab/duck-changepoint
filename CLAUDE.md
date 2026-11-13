@@ -42,6 +42,8 @@ Use `rtk` as a command prefix in this environment (see the user's global instruc
   validating everything (the BLOB comes from users).
 - `src/functions/*.c`: one file per SQL function, helpers in `list_io.c`.
 - `docs/`: architecture, algorithms, cost/penalty derivations, testing.
+- `website/`: the Docusaurus site. Its pages are generated from README.md, DEVELOPMENT.md and `docs/*.md`
+  by `website/sync_pages.py`: after editing those, rerun it and commit `website/docs` too (CI checks).
 - Reference data from R changepoint (GPL) lives in the separate `duck-changepoint-reference` repo.
   Do not add GPL code or data here; this repository is MIT.
 

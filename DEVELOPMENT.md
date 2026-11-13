@@ -77,4 +77,10 @@ test/c/         standalone C tests with sanitizers
 test/python/    manual cross-checks (ruptures, optimality)
 bench/          bench.sql + runner
 docs/           architecture, algorithms, costs and penalties, testing
+website/        the documentation site (Docusaurus), https://hugr-lab.github.io/duck-changepoint/
 ```
+
+The site's pages in `website/docs` are generated from README.md, this file and `docs/*.md` by
+`website/sync_pages.py`. Edit those sources, then run `python3 website/sync_pages.py` and commit both;
+`docs-build.yml` fails a pull request whose pages are out of date. To preview the site:
+`cd website && npm ci && npx docusaurus start`.
