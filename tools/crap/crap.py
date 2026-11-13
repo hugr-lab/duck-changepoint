@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
-"""CRAP score of every C function in src/ (make crap).
+"""CRAP gate for the C in src/ (make crap).
 
-CRAP = CC^2 * (1 - coverage)^3 + CC, with CC from lizard and coverage from clang's source-based
-coverage (llvm-cov) over every test that exercises the code:
+Builds every test that exercises the code with clang's source-based coverage, runs them, writes one
+LCOV report, and scores it with crap_cpp.py (lizard's complexity per function, line coverage from the
+report, CRAP = CC^2 * (1 - coverage)^3 + CC):
 
   - test/c/test_core.c with -DCPT_FAULT_INJECTION (every out-of-memory path),
   - test/c/test_threads.c,
   - the SQL logic tests in test/sql on a coverage build of the extension.
 
-Coverage is region coverage (the share of a function's code regions that ran), merged over all
-three. Exits 2 when any function scores at or above --threshold (default 10).
+Exits 2 when any function scores at or above --threshold (default 10).
 
-Needs clang, llvm-profdata and llvm-cov (xcrun finds them on macOS), uvx (for lizard), cmake, and
-configure/venv from `make configure`.
+Needs clang, llvm-profdata and llvm-cov (xcrun finds them on macOS), lizard (on PATH, or through uvx),
+cmake, and configure/venv from `make configure`. `python3 tools/crap/crap_cpp.py --selftest` checks the
+scoring; `uvx pytest tools/crap` runs that and this file's own tests.
 """
 
 import argparse
-import csv
-import io
-import json
 import os
 import platform
 import shutil
@@ -27,10 +25,10 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BUILD = os.path.join(ROOT, "build", "crap")
-CORE = ["src/core/cost.c", "src/core/cost_l1.c", "src/core/algo.c", "src/core/online.c"]
+# Absolute, like cmake's paths, so llvm-cov sees one source file across all the binaries.
+CORE = [os.path.join(ROOT, f) for f in ("src/core/cost.c", "src/core/cost_l1.c", "src/core/algo.c", "src/core/online.c")]
 COVERAGE_FLAGS = ["-fprofile-instr-generate", "-fcoverage-mapping", "-O0", "-g"]
-# lizard reports the entry point under its macro name; the compiled function is <name>_init_c_api.
-ALIASES = {"DUCKDB_EXTENSION_ENTRYPOINT": "cpt_init_c_api"}
+SCORER = os.path.join(ROOT, "tools", "crap", "crap_cpp.py")
 
 
 def tool(name):
@@ -46,10 +44,9 @@ def run(cmd, env=None, quiet=True):
     return out.stdout
 
 
-def complexity():
-    """(file, function) -> cyclomatic complexity, from lizard."""
-    rows = csv.reader(io.StringIO(run(["uvx", "--quiet", "lizard", "src", "--csv"])))
-    return {(r[6], ALIASES.get(r[7], r[7])): int(r[1]) for r in rows}
+def lizard():
+    """lizard from PATH, or through uvx."""
+    return [shutil.which("lizard")] if shutil.which("lizard") else ["uvx", "--quiet", "lizard"]
 
 
 def profile_env(name):
@@ -61,8 +58,8 @@ def core_tests():
     binaries = []
     for test, defines in (("test_core", ["-DCPT_FAULT_INJECTION"]), ("test_threads", [])):
         binary = os.path.join(BUILD, test)
-        run(["clang", "-std=c11", "-pthread", *COVERAGE_FLAGS, *defines, "-Isrc/include", f"test/c/{test}.c", *CORE,
-             "-lm", "-o", binary])
+        run(["clang", "-std=c11", "-pthread", *COVERAGE_FLAGS, *defines, "-Isrc/include",
+             os.path.join(ROOT, f"test/c/{test}.c"), *CORE, "-lm", "-o", binary])
         run([binary], env=profile_env(test))
         binaries.append(binary)
     return binaries
@@ -86,57 +83,41 @@ def sql_tests():
     return library
 
 
-def coverage(binaries):
-    """(file, function) -> region coverage in [0, 1], merged over all binaries."""
+def lcov_report(binaries):
+    """One LCOV report over every binary, from the merged profiles; returns its path."""
     raw = [os.path.join(BUILD, f) for f in os.listdir(BUILD) if f.endswith(".profraw")]
     profdata = os.path.join(BUILD, "all.profdata")
     run([*tool("llvm-profdata"), "merge", "-sparse", *raw, "-o", profdata])
-    covered = {}
-    for binary in binaries:
-        export = json.loads(run([*tool("llvm-cov"), "export", "-format=text", f"-instr-profile={profdata}", binary]))
-        for fn in export["data"][0]["functions"]:
-            path = os.path.relpath(fn["filenames"][0], ROOT)
-            if not path.startswith("src/"):
-                continue
-            # code regions (kind 0) in the function's own file (file id 0): executed or not
-            flags = [r[4] > 0 for r in fn["regions"] if r[7] == 0 and r[5] == 0]
-            key = (path, fn["name"].split(":")[-1])
-            old = covered.get(key)
-            covered[key] = [a or b for a, b in zip(old, flags)] if old and len(old) == len(flags) else old or flags
-    return {key: (sum(f) / len(f) if f else 1.0) for key, f in covered.items()}
+    objects = [arg for binary in binaries[1:] for arg in ("-object", binary)]
+    report = os.path.join(BUILD, "coverage.lcov")
+    with open(report, "w") as out:
+        out.write(run([*tool("llvm-cov"), "export", "-format=lcov", f"-instr-profile={profdata}", binaries[0], *objects]))
+    return report
 
 
-def crap(cc, cov):
-    return cc * cc * (1 - cov) ** 3 + cc
+def lizard_csv():
+    """lizard's csv over src/; returns its path."""
+    path = os.path.join(BUILD, "lizard.csv")
+    with open(path, "w") as out:
+        out.write(run([*lizard(), "--csv", "-l", "cpp", "src"]))
+    return path
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--threshold", type=float, default=10.0)
+    parser.add_argument("--all", action="store_true", help="list every function, not only the worst 30")
+    return parser.parse_args()
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--threshold", type=float, default=10.0)
-    parser.add_argument("--all", action="store_true", help="list every function, not only those at/above 5")
-    args = parser.parse_args()
-
+    args = parse_args()
     shutil.rmtree(BUILD, ignore_errors=True)
     os.makedirs(BUILD)
-    cc = complexity()
-    cov = coverage(core_tests() + [sql_tests()])
-
-    rows = []
-    for (path, name), c in cc.items():
-        k = cov.get((path, name))
-        rows.append((crap(c, k if k is not None else 0.0), name, path, c, k))
-    rows.sort(key=lambda r: (-r[0], r[1]))
-
-    print(f"{len(rows)} functions in src/, worst first (CRAP = CC^2 (1 - cov)^3 + CC, region coverage)\n")
-    print(f"{'function':30s} {'file':36s} {'CC':>3s} {'cov%':>6s} {'CRAP':>6s}")
-    for score, name, path, c, k in rows:
-        if args.all or score >= 5:
-            shown = "N/A" if k is None else f"{100 * k:5.1f}"
-            print(f"{name:30s} {path:36s} {c:3d} {shown:>6s} {score:6.1f}")
-    worst = rows[0][0]
-    failing = [r for r in rows if r[0] >= args.threshold]
-    print(f"\nworst CRAP {worst:.1f}; {len(failing)} function(s) at or above {args.threshold:g}")
-    return 2 if failing else 0
+    report = lcov_report(core_tests() + [sql_tests()])
+    scorer = [sys.executable, SCORER, "--lizard-csv", lizard_csv(), "--lcov", report, "--threshold", str(args.threshold),
+              "--limit", "0" if args.all else "30", "src"]
+    return subprocess.run(scorer, cwd=ROOT).returncode
 
 
 if __name__ == "__main__":
