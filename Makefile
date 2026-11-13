@@ -1,52 +1,32 @@
-.PHONY: clean clean_all bench compare_ruptures check_optimality test_compat test_core test_threads leak_check joern_leaks crap help
-
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-# Main extension configuration
-EXTENSION_NAME=cpt
+# The C++ extension, built inside DuckDB v2.0.0 (the duckdb submodule) as the extension template does.
+# The stable C API build, which loads in DuckDB 1.5.x, lives on the v1.5.x branch.
+EXT_NAME=cpt
+EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
-# Stable C API only: the binary carries the C_STRUCT ABI footer and loads in every DuckDB release
-# from TARGET_DUCKDB_VERSION onwards (1.5.x and 2.0.x). Never set this to 1.
-USE_UNSTABLE_C_API=0
-
-# Oldest DuckDB version we support. duckdb_capi/ must hold the headers from exactly this tag
-# (refresh with `make update_duckdb_headers`).
-TARGET_DUCKDB_VERSION=v1.5.6
-
-all: configure release
+# DuckDB 2.0 takes its version from this, not from git; without it a build stamps the commit hash and
+# only loads into a DuckDB built from the same tree. The distribution CI sets it the same way.
+OVERRIDE_GIT_DESCRIBE ?= v2.0.0
 
 # Compatible with DuckDB Community Extensions CI
-# (provides: configure, platform, venv, test_extension_*, update_duckdb_headers, ...)
-include extension-ci-tools/makefiles/c_api_extensions/base.Makefile
-include extension-ci-tools/makefiles/c_api_extensions/c_cpp.Makefile
+# (provides: release, debug, reldebug, test_release, test_debug, wasm_*, format, clean, ...)
+include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
-configure: venv platform extension_version
+.PHONY: test_core test_threads compare_ruptures check_optimality leak_check joern_leaks crap bench help
 
-debug: build_extension_library_debug build_extension_with_metadata_debug
-release: build_extension_library_release build_extension_with_metadata_release
+EXTENSION_BINARY := build/release/extension/$(EXT_NAME)/$(EXT_NAME).duckdb_extension
+CORE_SOURCES := src/core/cost.c src/core/cost_l1.c src/core/algo.c src/core/online.c
 
-test: test_debug
-test_debug: test_extension_debug
-test_release: test_extension_release
+# Python checks against the DuckDB 2.0.0 package, in a pinned uv environment.
+PYTHON := uv run --quiet --no-project --python 3.12 --with duckdb==2.0.0 --with numpy==2.3.4
 
-# Run the SQL tests against the oldest supported DuckDB (in a separate venv) as well as the default one.
-COMPAT_DUCKDB_VERSION ?= 1.5.6
-COMPAT_VENV := configure/venv-compat
-test_compat: release
-	@test -d $(COMPAT_VENV) || ( $(PYTHON_BIN) -m venv $(COMPAT_VENV) && \
-		$(COMPAT_VENV)/bin/python3 -m pip install -q duckdb==$(COMPAT_DUCKDB_VERSION) packaging \
-		git+https://github.com/duckdb/duckdb-sqllogictest-python@2ac8dbc012ddbd96a57dca37784fd8ee3c0eb021 )
-	$(COMPAT_VENV)/bin/python3 -m duckdb_sqllogictest --test-dir test/sql \
-		--external-extension build/release/$(EXTENSION_NAME).duckdb_extension
-
-# Not part of `make test`: needs ruptures + numpy (installed into configure/venv on demand).
+# Not part of `make test`: cross-checks against ruptures and unpruned Optimal Partitioning.
 compare_ruptures: release
-	$(PYTHON_VENV_BIN) -m pip install -q ruptures numpy
-	$(PYTHON_VENV_BIN) test/python/compare_ruptures.py build/release/$(EXTENSION_NAME).duckdb_extension
+	$(PYTHON) --with ruptures==1.1.10 python -I test/python/compare_ruptures.py $(EXTENSION_BINARY)
 
 check_optimality: release
-	$(PYTHON_VENV_BIN) -m pip install -q numpy
-	$(PYTHON_VENV_BIN) test/python/check_optimality.py build/release/$(EXTENSION_NAME).duckdb_extension
+	$(PYTHON) python -I test/python/check_optimality.py $(EXTENSION_BINARY)
 
 # Standalone C tests of src/core under AddressSanitizer + UndefinedBehaviorSanitizer (no DuckDB needed).
 # CPT_FAULT_INJECTION lets the test fail every allocation in turn (src/include/cpt_alloc.h).
@@ -54,8 +34,7 @@ CORE_TEST_BIN := build/test_core
 test_core:
 	@mkdir -p build
 	$(CC) -std=c11 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
-		-Wall -Wextra -DCPT_FAULT_INJECTION -Isrc/include test/c/test_core.c src/core/cost.c src/core/cost_l1.c \
-		src/core/algo.c src/core/online.c -lm -o $(CORE_TEST_BIN)
+		-Wall -Wextra -DCPT_FAULT_INJECTION -Isrc/include test/c/test_core.c $(CORE_SOURCES) -lm -o $(CORE_TEST_BIN)
 	$(CORE_TEST_BIN)
 
 # Concurrency test of src/core under ThreadSanitizer: 8 threads run every algorithm on series from one
@@ -64,21 +43,23 @@ THREADS_TEST_BIN := build/test_threads
 test_threads:
 	@mkdir -p build
 	$(CC) -std=c11 -g -O1 -fsanitize=thread -fno-omit-frame-pointer -Wall -Wextra -pthread \
-		-Isrc/include test/c/test_threads.c src/core/cost.c src/core/cost_l1.c src/core/algo.c src/core/online.c -lm -o $(THREADS_TEST_BIN)
+		-Isrc/include test/c/test_threads.c $(CORE_SOURCES) -lm -o $(THREADS_TEST_BIN)
 	TSAN_OPTIONS=halt_on_error=1 $(THREADS_TEST_BIN)
 
-# Leak checks (manual). Dynamic: a host program links libduckdb, loads the debug extension and runs
-# every function incl. error paths under macOS `leaks --atExit` (exit 1 on any leak); the core tests
-# run under `leaks` too (ASan hides allocations from it). Needs libduckdb: brew install duckdb.
-DUCKDB_LIB_DIR ?= $(shell brew --prefix duckdb 2>/dev/null)/lib
+# Leak checks (macOS). Dynamic: a host program links the libduckdb of this tree's reldebug build (a C++
+# extension loads only into the DuckDB it was built with), loads that build's extension and runs every
+# function incl. error paths under `leaks --atExit` (exit 1 on any leak); the core tests run under
+# `leaks` too. Not the debug build: DuckDB compiles it with AddressSanitizer, whose heap `leaks` cannot
+# inspect.
 LEAK_ITERATIONS ?= 50
-leak_check: debug
+LEAK_LIB_DIR := build/reldebug/src
+leak_check: reldebug
 	@mkdir -p build
-	$(CC) -std=c11 -g -O1 -Iduckdb_capi test/leak/leak_host.c -L$(DUCKDB_LIB_DIR) -lduckdb \
-		-Wl,-rpath,$(DUCKDB_LIB_DIR) -o build/leak_host
-	$(CC) -std=c11 -g -O1 -DCPT_FAULT_INJECTION -Isrc/include test/c/test_core.c src/core/cost.c \
-		src/core/cost_l1.c src/core/algo.c src/core/online.c -lm -o build/test_core_plain
-	MallocStackLogging=1 leaks --atExit -- build/leak_host build/debug/$(EXTENSION_NAME).duckdb_extension \
+	$(CC) -std=c11 -g -O1 -Iduckdb/src/include test/leak/leak_host.c -L$(LEAK_LIB_DIR) -lduckdb \
+		-Wl,-rpath,$(PROJ_DIR)$(LEAK_LIB_DIR) -o build/leak_host
+	$(CC) -std=c11 -g -O1 -DCPT_FAULT_INJECTION -Isrc/include test/c/test_core.c $(CORE_SOURCES) -lm \
+		-o build/test_core_plain
+	MallocStackLogging=1 leaks --atExit -- build/leak_host build/reldebug/extension/$(EXT_NAME)/$(EXT_NAME).duckdb_extension \
 		$(LEAK_ITERATIONS) > build/leaks_extension.txt 2>&1 || (tail -60 build/leaks_extension.txt; exit 1)
 	@grep -E "iterations|leaks for" build/leaks_extension.txt
 	MallocStackLogging=1 leaks --atExit -- build/test_core_plain > build/leaks_core.txt 2>&1 \
@@ -92,29 +73,22 @@ joern_leaks:
 	joern-parse src --output build/joern/cpg.bin
 	joern --script tools/joern/leaks.sc --param cpgFile=build/joern/cpg.bin; rc=$$?; rm -rf workspace; exit $$rc
 
-# CRAP score of every C function in src/ (complexity from lizard, coverage from llvm-cov over test_core,
-# test_threads and the SQL tests). Exit 2 when any function scores CRAP >= 10.
+# CRAP score of every C and C++ function in src/ (complexity from lizard, coverage from llvm-cov over
+# test_core, test_threads and the SQL tests on a coverage build). Exit 2 when any function scores CRAP >= 10.
 crap:
-	$(PYTHON_BIN) tools/crap/crap.py
+	python3 tools/crap/crap.py
 
 bench: release
-	$(PYTHON_VENV_BIN) bench/run_bench.py build/release/$(EXTENSION_NAME).duckdb_extension
-
-clean: clean_build clean_cmake
-clean_all: clean clean_configure
+	$(PYTHON) python -I bench/run_bench.py $(EXTENSION_BINARY)
 
 help:
-	@echo "make configure        - create configure/venv (test runner) and detect platform"
-	@echo "make release | debug  - build build/{release,debug}/cpt.duckdb_extension"
-	@echo "make test             - SQL logic tests against the debug build"
-	@echo "make test_release     - SQL logic tests against the release build"
-	@echo "make test_compat      - SQL logic tests on DuckDB $(COMPAT_DUCKDB_VERSION) (oldest supported)"
+	@echo "make release | debug  - build DuckDB and build/{release,debug}/extension/cpt/cpt.duckdb_extension"
+	@echo "make test_release     - SQL logic tests (DuckDB's unittest over test/sql) against the release build"
 	@echo "make test_core        - C tests of src/core under ASan/UBSan (no DuckDB needed)"
 	@echo "make test_threads     - 8 threads on shared series under ThreadSanitizer (no DuckDB needed)"
 	@echo "make compare_ruptures - cross-check against ruptures (manual, not CI gating)"
 	@echo "make check_optimality - PELT vs unpruned Optimal Partitioning (manual, not CI gating)"
-	@echo "make leak_check       - every SQL function and the core under macOS leaks (needs brew duckdb)"
+	@echo "make leak_check       - every SQL function and the core under macOS leaks"
 	@echo "make joern_leaks      - static allocation/release audit of src/ with Joern"
-	@echo "make crap             - CRAP score per C function (lizard + llvm-cov); fails at CRAP >= 10"
+	@echo "make crap             - CRAP score per C/C++ function (lizard + llvm-cov); fails at CRAP >= 10"
 	@echo "make bench            - l2 PELT runtime for n = 1e4, 1e5, 1e6"
-

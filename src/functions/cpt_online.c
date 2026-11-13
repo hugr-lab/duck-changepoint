@@ -19,8 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-DUCKDB_EXTENSION_EXTERN
-
 #define DEFAULT_THRESHOLD 15.0
 #define DEFAULT_TRAIN 100
 

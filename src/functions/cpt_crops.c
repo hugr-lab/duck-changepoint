@@ -7,8 +7,6 @@
 
 #include <stdio.h>
 
-DUCKDB_EXTENSION_EXTERN
-
 static int write_entries(duckdb_vector output, idx_t row, idx_t *offset, idx_t *inner_offset,
                          const cpt_crops_entry *entries, int64_t count, char *err) {
 	idx_t new_size = *offset + (idx_t)count;

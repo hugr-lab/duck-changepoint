@@ -1,12 +1,11 @@
-#include "duckdb_extension.h"
+#include "duckdb.h"
 
 #include "cpt_functions.h"
+#include "cpt_query.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-DUCKDB_EXTENSION_EXTERN
 
 //===--------------------------------------------------------------------===//
 // cpt_max_evaluations
@@ -23,49 +22,57 @@ bool cpt_register_settings(duckdb_connection connection) {
 	duckdb_destroy_value(&def);
 	duckdb_config_option_set_description(
 	    option, "Maximum work per cpt_* call on one series, in segment cost evaluations (an l1 evaluation "
-	            "counts log2(n)); 0 = no limit. Bounds run time, since a running call cannot be interrupted.");
+	            "counts log2(n)); 0 = no limit. A running call also stops when the query is interrupted.");
 	bool ok = duckdb_register_config_option(connection, option) == DuckDBSuccess;
 	duckdb_destroy_config_option(&option);
 	return ok;
 }
 
-static void *copy_int64(void *data) {
-	int64_t *copy = (int64_t *)malloc(sizeof(int64_t));
+// What a bind captures for the query: the work limit and the query itself, for interrupts.
+typedef struct {
+	int64_t max_evals;
+	void *query; // cpt_query.h
+} bind_data;
+
+static void *copy_bind_data(void *data) {
+	bind_data *copy = (bind_data *)malloc(sizeof(bind_data));
 	if (copy) {
-		*copy = *(int64_t *)data;
+		*copy = *(bind_data *)data;
 	}
 	return copy;
 }
 
-// Bind: capture cpt_max_evaluations for this query.
+static int64_t max_evaluations(duckdb_client_context context) {
+	duckdb_config_option_scope scope;
+	duckdb_value value = context ? duckdb_client_context_get_config_option(context, CPT_MAX_EVALUATIONS_SETTING, &scope)
+	                             : NULL;
+	int64_t max_evals = value ? duckdb_get_int64(value) : CPT_MAX_EVALUATIONS_DEFAULT;
+	duckdb_destroy_value(&value);
+	return max_evals;
+}
+
+// Bind: capture cpt_max_evaluations and the query.
 static void BindBudget(duckdb_bind_info info) {
-	int64_t max_evals = CPT_MAX_EVALUATIONS_DEFAULT;
-	duckdb_client_context context = NULL;
-	duckdb_scalar_function_get_client_context(info, &context);
-	if (context) {
-		duckdb_config_option_scope scope;
-		duckdb_value value = duckdb_client_context_get_config_option(context, CPT_MAX_EVALUATIONS_SETTING, &scope);
-		if (value) {
-			max_evals = duckdb_get_int64(value);
-			duckdb_destroy_value(&value);
-		}
-		duckdb_destroy_client_context(&context);
-	}
-	int64_t *data = (int64_t *)malloc(sizeof(int64_t));
+	bind_data *data = (bind_data *)malloc(sizeof(bind_data));
 	if (!data) {
 		duckdb_scalar_function_bind_set_error(info, "cpt: out of memory");
 		return;
 	}
-	*data = max_evals;
+	duckdb_client_context context = NULL;
+	duckdb_scalar_function_get_client_context(info, &context);
+	data->max_evals = max_evaluations(context);
+	data->query = cpt_query_context(context);
+	duckdb_destroy_client_context(&context);
 	duckdb_scalar_function_set_bind_data(info, data, free);
-	duckdb_scalar_function_set_bind_data_copy(info, copy_int64);
+	duckdb_scalar_function_set_bind_data_copy(info, copy_bind_data);
 }
 
 cpt_budget cpt_function_budget(duckdb_function_info info) {
-	cpt_budget budget = {CPT_MAX_EVALUATIONS_DEFAULT, 0};
-	int64_t *data = (int64_t *)duckdb_scalar_function_get_bind_data(info);
+	cpt_budget budget = {CPT_MAX_EVALUATIONS_DEFAULT, 0, cpt_query_interrupted, NULL};
+	bind_data *data = (bind_data *)duckdb_scalar_function_get_bind_data(info);
 	if (data) {
-		budget.max_evals = *data;
+		budget.max_evals = data->max_evals;
+		budget.interrupt_ctx = data->query;
 	}
 	return budget;
 }
@@ -92,10 +99,10 @@ static const char *budget_hint(const char *function) {
 void cpt_report_error(duckdb_function_info info, const char *function, int rc, const char *err) {
 	char msg[CPT_ERR_LEN * 3];
 	if (rc == CPT_BUDGET_EXCEEDED) {
-		snprintf(msg, sizeof(msg),
-		         "%s: %s. A running cpt_* call cannot be interrupted, so its work is capped by "
-		         "SET " CPT_MAX_EVALUATIONS_SETTING " (0 = no limit).%s",
+		snprintf(msg, sizeof(msg), "%s: %s; raise or remove it with SET " CPT_MAX_EVALUATIONS_SETTING " (0 = no limit).%s",
 		         function, err, budget_hint(function));
+	} else if (rc == CPT_INTERRUPTED) {
+		snprintf(msg, sizeof(msg), "%s: %s", function, err);
 	} else {
 		snprintf(msg, sizeof(msg), "%s", err);
 	}
@@ -128,11 +135,9 @@ static bool (*const REGISTRATIONS[])(duckdb_connection) = {
     cpt_register_dynp,     cpt_register_crops, cpt_register_segment_stats, cpt_register_online,
 };
 
-DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection connection, duckdb_extension_info info,
-                            struct duckdb_extension_access *access) {
+bool cpt_register_all(duckdb_connection connection) {
 	for (size_t i = 0; i < sizeof(REGISTRATIONS) / sizeof(REGISTRATIONS[0]); i++) {
 		if (!REGISTRATIONS[i](connection)) {
-			access->set_error(info, "cpt: failed to register functions");
 			return false;
 		}
 	}

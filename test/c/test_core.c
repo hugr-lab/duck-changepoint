@@ -279,11 +279,46 @@ static int test_budgets(void) {
 	int checks = 0;
 	for (int kind = 0; kind < 4; kind++) {
 		for (int64_t limit = 1; limit < 1000000; limit = limit * 3 + 1) {
-			cpt_budget budget = {limit, 0};
+			cpt_budget budget = {limit, 0, NULL, NULL};
 			int rc = run_all((cpt_cost_kind)kind, x, 60, &budget, err);
 			CHECK(rc == 0 || (rc == CPT_BUDGET_EXCEEDED && strstr(err, "work limit")), "cost %d, limit %lld: rc=%d %s",
 			      kind, (long long)limit, rc, err);
 			checks++;
+		}
+	}
+	return checks;
+}
+
+// The caller's interrupted() stops every algorithm at its next charge: the run returns CPT_INTERRUPTED,
+// and the callback is not asked again after it says yes. Counted calls make the stop land at every
+// point of the run in turn, up to a run that finishes.
+typedef struct {
+	int calls;
+	int stop_at;
+} stop_counter;
+
+static int stop_after(void *ctx) {
+	stop_counter *c = ctx;
+	return ++c->calls >= c->stop_at;
+}
+
+static int test_interrupts(void) {
+	double x[60];
+	make_counts(x, 60);
+	char err[CPT_ERR_LEN];
+	int checks = 0;
+	for (int kind = 0; kind < 4; kind++) {
+		for (int stop_at = 1;; stop_at++) {
+			stop_counter c = {0, stop_at};
+			cpt_budget budget = {0, 0, stop_after, &c};
+			int rc = run_all((cpt_cost_kind)kind, x, 60, &budget, err);
+			checks++;
+			if (rc == 0) {
+				CHECK(c.calls < stop_at, "cost %d: finished although asked to stop at call %d", kind, stop_at);
+				break;
+			}
+			CHECK(rc == CPT_INTERRUPTED && strcmp(err, "interrupted") == 0 && c.calls == stop_at,
+			      "cost %d, stop at %d: rc=%d calls=%d %s", kind, stop_at, rc, c.calls, err);
 		}
 	}
 	return checks;
@@ -545,7 +580,7 @@ static int test_online_params(void) {
 	double x[2000];
 	make_stream(x, 2000, 0.05);
 	cpt_online_alarms alarms = {NULL, 0, 0};
-	cpt_budget budget = {20000, 0};
+	cpt_budget budget = {20000, 0, NULL, NULL};
 	cpt_online_init(&d, 1e12, 0, 0, 1, err);
 	CHECK(cpt_online_feed(&d, x, 2000, &budget, &alarms, err) == CPT_BUDGET_EXCEEDED && strstr(err, "work limit"),
 	      "online feed ignored the work limit");
@@ -674,6 +709,7 @@ int main(void) {
 	}
 	checks += test_extreme_arguments();
 	checks += test_budgets();
+	checks += test_interrupts();
 	checks += test_invalid_arguments();
 	checks += test_online_exact();
 	checks += test_online_pruning();

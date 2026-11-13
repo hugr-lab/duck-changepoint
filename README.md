@@ -2,8 +2,9 @@
 
 Offline change point detection inside DuckDB: PELT, binary segmentation, exact dynamic programming
 and CROPS penalty sweeps over four segment costs (mean, mean + variance, Poisson rate, median).
-Written in C11 against the **stable DuckDB C extension API**, so one binary loads in DuckDB 1.5.x
-and 2.0.x.
+For DuckDB 2.0: a C++ extension, built with DuckDB, whose numerical core and SQL functions are C11. For
+DuckDB 1.5.x, use the [`v1.5.x`](https://github.com/hugr-lab/duck-changepoint/tree/v1.5.x) branch,
+which keeps the build on the stable C extension API.
 
 ```sql
 LOAD cpt;
@@ -41,17 +42,18 @@ INSTALL cpt FROM community;
 LOAD cpt;
 ```
 
-For DuckDB 1.5.6 to 1.5.x, or to run the current source, build it (see
-[Building and testing](#building-and-testing)) and load the unsigned binary:
+To run the current source, build it (see [Building and testing](#building-and-testing)) and load the
+unsigned binary into DuckDB 2.0.0:
 
 ```sh
-duckdb -unsigned -c "LOAD 'build/release/cpt.duckdb_extension'; SELECT cpt_pelt([0,0,0,9,9,9]::DOUBLE[], 'l2', 1.0);"
+duckdb -unsigned -c "LOAD 'build/release/extension/cpt/cpt.duckdb_extension'; SELECT cpt_pelt([0,0,0,9,9,9]::DOUBLE[], 'l2', 1.0);"
 ```
 
 From Python: `duckdb.connect(config={"allow_unsigned_extensions": "true"})`, then `LOAD '<path>'`.
 
-The binary carries the `C_STRUCT` ABI footer with `v1.5.6` as its minimum DuckDB version. It loads in
-DuckDB v1.5.6 and later, including 2.0.x. `make test_compat` runs the SQL tests on 1.5.6 to check this.
+A C++ extension loads only into the DuckDB release it was built for. For DuckDB 1.5.6 to 1.5.x, build
+the [`v1.5.x`](https://github.com/hugr-lab/duck-changepoint/tree/v1.5.x) branch: its binary is on the
+stable C API and loads in every release from 1.5.6 on.
 
 ## Functions
 
@@ -367,8 +369,14 @@ O(log n). `cpt_dynp` is O(n_bkps · n²) and meant for series up to roughly 1e4 
 
 ## Limits and cancellation
 
-A scalar function in the C API cannot see that its query was interrupted: once a `cpt_*` call has
-started on a series, it runs to the end. To keep that bounded, every call (one series) has a work limit:
+A running `cpt_*` call stops when its query is interrupted (Ctrl-C in the CLI, `con.interrupt()` in
+Python): the algorithms check once per outer step, so a call stops within one step, and every later
+series in the same vector stops at its first step. A query over 32 series of 40,000 points with one
+change each (l2 PELT, no work limit), which runs for 46 s on an Apple M-series laptop, stops 0.02 s
+after an interrupt; so does `l1` PELT on one series of 200,000 points. (On the stable C API build of the `v1.5.x` branch a running call cannot be
+interrupted; see [#2](https://github.com/hugr-lab/duck-changepoint/issues/2).)
+
+Every call (one series) also has a work limit:
 
 ```sql
 SET cpt_max_evaluations = 1000000000;   -- default; 0 = no limit
@@ -378,16 +386,8 @@ The unit is one segment cost evaluation. An `l1` evaluation counts log₂ n unit
 evaluation counts 2, so the limit means roughly the same time for every cost. At the default, a call
 stops after about 2–3 s on a laptop with an error that says why. PELT on 200,000 points with a single
 change would otherwise take about 25 s (l2) or several minutes (l1). The 1e6-point benchmark above uses
-about 3.8 × 10⁸ units. The limit applies to PELT, Binseg, Dynp and to a whole CROPS sweep.
-
-**The limit is per series, not per query.** DuckDB checks for an interrupt only between calls of a
-scalar function, and one call processes a whole vector of up to 2,048 rows (series). A query over many
-series that each stay under the limit therefore cannot be cancelled until the current vector is done:
-32 series of 40,000 points with one change each took 18.8 s, and an interrupt after 1 s returned only
-at the end ([#2](https://github.com/hugr-lab/duck-changepoint/issues/2)). In the worst case that is
-2,048 × the per-series limit. On servers where users send their own SQL, lower the limit accordingly.
-Series in the same vector also run one after another on a single thread. A proper fix needs an
-interrupt check for scalar functions in the DuckDB C API, which does not exist yet.
+about 3.8 × 10⁸ units. The limit applies to PELT, Binseg, Dynp and to a whole CROPS sweep, and it is per
+series. Series in the same vector (up to 2,048 rows) run one after another on a single thread.
 
 When the limit is hit, the error message suggests what to do. For long series with few changes,
 `cpt_binseg` (O(n log n)) finds the same change in milliseconds. To raise or remove the limit,
@@ -397,23 +397,22 @@ When the limit is hit, the error message suggests what to do. For long series wi
 
 ## Building and testing
 
-Requirements: CMake ≥ 3.5, a C11 compiler, Python 3 (for the build helpers and test runner) and git.
+Requirements: CMake ≥ 3.5, a C11 and C++17 compiler, Python 3, git, and ninja (optional, `GEN=ninja`)
+and uv for the Python checks.
 
 ```sh
 git clone --recurse-submodules <repo> && cd duck-changepoint
-make configure        # venv with the DuckDB test runner, platform detection
-make release          # build/release/cpt.duckdb_extension
+GEN=ninja make release   # builds DuckDB v2.0.0 from the submodule, then build/release/extension/cpt/cpt.duckdb_extension
 ```
 
 These checks gate CI:
 
 ```sh
-make test             # SQL logic tests (debug build) on the latest DuckDB
-make test_compat      # same tests on DuckDB 1.5.6
+make test_release     # SQL logic tests in DuckDB's unittest
 make test_core        # C tests of the numerical core under ASan/UBSan
 make test_threads     # the core on 8 threads under ThreadSanitizer
-make leak_check       # every function under macOS `leaks` (needs `brew install duckdb`)
-make crap             # CRAP < 10 for every C function (lizard + llvm-cov)
+make leak_check       # every function under macOS `leaks`, against this tree's debug build
+make crap             # CRAP < 10 for every C and C++ function (lizard + llvm-cov)
 ```
 
 These are run by hand:
@@ -435,15 +434,14 @@ changepoint under the GPL. With both repositories checked out side by side:
 
 ```sh
 cd ../duck-changepoint-reference
-make test                         # against ../duck-changepoint/build/release/cpt.duckdb_extension
-make test DUCKDB_VERSION=1.5.6
+make test                         # against the extension built in ../duck-changepoint
 make reference-data               # regenerate the data with R changepoint in a container
 ```
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The bundled DuckDB C API headers in `duckdb_capi/` are MIT-licensed by the
-DuckDB Foundation ([LICENSES/](LICENSES/README.md)). This repository contains no GPL code or data:
+MIT, see [LICENSE](LICENSE). DuckDB, built with the extension from the `duckdb` submodule and linked into
+the loadable binary, is MIT-licensed by the DuckDB Foundation ([LICENSES/](LICENSES/README.md)). This repository contains no GPL code or data:
 the algorithms are implemented from the published papers, and the changepoint-derived reference data is
 kept in `duck-changepoint-reference` (GPL-2.0-or-later).
 

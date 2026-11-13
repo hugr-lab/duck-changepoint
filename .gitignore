@@ -10,3 +10,4 @@ workspace/
 .metrics/
 .venv/
 target/
+.cache/

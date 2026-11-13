@@ -5,8 +5,6 @@
 
 #include <stdio.h>
 
-DUCKDB_EXTENSION_EXTERN
-
 int cpt_check_penalty(double pen, const char *what, char *err) {
 	if (!(pen >= 0) || pen - pen != 0) { // negative, NaN or infinite
 		snprintf(err, CPT_ERR_LEN, "%s must be a finite number >= 0, got %g", what, pen);

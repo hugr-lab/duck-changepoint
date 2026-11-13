@@ -7,8 +7,6 @@
 
 #include <stdio.h>
 
-DUCKDB_EXTENSION_EXTERN
-
 // The stop rule: n_bkps splits (column 2) or a penalty (column 3), BIC when neither is given.
 // *n_bkps is -1 when the penalty rule applies.
 static int binseg_stop_rule(duckdb_data_chunk input, idx_t row, int64_t n, int p, int64_t *n_bkps, double *pen,

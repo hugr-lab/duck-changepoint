@@ -5,13 +5,16 @@ Guidance for coding agents working in this repository.
 ## What this is
 
 `cpt`: a DuckDB loadable extension for offline change point detection (PELT, Binseg, Dynp, CROPS
-over l2 / normal / poisson / l1 costs), written in C11 against the **stable** DuckDB C extension API.
-One binary must load in DuckDB 1.5.6 and later (1.5.x and 2.0.x).
+over l2 / normal / poisson / l1 costs). For DuckDB 2.0.0 as a C++ extension built with DuckDB (the
+`duckdb` submodule); the numerical core and the SQL functions are C11, registered through DuckDB's C API
+from the C++ entry point in `src/cpp/`. The stable C API build for DuckDB 1.5.x lives on the `v1.5.x`
+branch; fixes that matter there go to both branches.
 
 ## Hard rules
 
-- C11 only. No C++, no DuckDB internals, no `duckdb_extension_v2.h`, no `USE_UNSTABLE_C_API`.
-- `duckdb_capi/` holds the v1.5.6 headers; only call API functions present there.
+- `src/core/` and `src/functions/` are C11; C++ only in `src/cpp/`. The C files include `duckdb.h`,
+  never `duckdb_extension.h`, whose calls would go through a C API extension's function table that this
+  extension's entry point never fills.
 - `src/core/` has no DuckDB dependency. Algorithms use costs only through `cpt_cost`.
 - PELT must stay exact: any change to pruning needs `make test_core` and `make check_optimality` to
   pass. ruptures and changepoint prune heuristically when min_size > 1; do not copy them.
@@ -21,9 +24,8 @@ One binary must load in DuckDB 1.5.6 and later (1.5.x and 2.0.x).
 ## Commands
 
 ```sh
-make configure && make release      # build/release/cpt.duckdb_extension
-make test_release                   # SQL tests, latest DuckDB
-make test_compat                    # SQL tests, DuckDB 1.5.6
+GEN=ninja make release              # DuckDB + build/release/extension/cpt/cpt.duckdb_extension
+make test_release                   # SQL tests in DuckDB's unittest
 make test_core                      # C core tests under ASan/UBSan
 make test_threads                   # core on 8 threads under ThreadSanitizer
 make compare_ruptures check_optimality bench   # manual checks
@@ -47,13 +49,16 @@ Use `rtk` as a command prefix in this environment (see the user's global instruc
 
 - DuckDB 2.0 rejects `x -> ...` lambdas by default. Use `lambda x: ...` in tests and docs.
 - `generate_series` has no DOUBLE overload; build penalty grids from `range()`.
-- The sqllogictest runner stops at the first failing file.
-- Every C function stays at CRAP < 10 (`make crap`): small, single-purpose functions; core allocation
+- DuckDB's unittest (`make test_release`) runs every test file and reports each failure; it loads the
+  extension from the build's local repository. A test that skips on `require cpt` means the extension
+  was not found, not that it passed.
+- Every C and C++ function stays at CRAP < 10 (`make crap`): small, single-purpose functions; core allocation
   through `cpt_malloc`/`cpt_calloc`/`cpt_realloc` so fault injection reaches the out-of-memory paths.
 - No mutable global or static state in src/: calls run concurrently on DuckDB's threads
   (`make test_threads`, `test/sql/cpt_threads.test`).
-- A C API scalar function cannot be interrupted: new loops must charge `cpt_budget` (see algo.c)
-  so `cpt_max_evaluations` keeps bounding run time.
-- With no git commits, set `EXTENSION_VERSION` or the metadata footer is corrupt.
+- New loops must charge `cpt_budget` (see algo.c): the charge is where `cpt_max_evaluations` bounds
+  the work and where a running call learns that its query was interrupted (`cpt_query.h`).
+- Without `OVERRIDE_GIT_DESCRIBE=v2.0.0` (set in the Makefile) a DuckDB 2.0 build is stamped with the
+  commit hash, and the binary refuses to load into the released DuckDB.
 - Expected values in tests must be derived from the model, not copied from output. Several tests
   carry the arithmetic in a comment.

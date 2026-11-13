@@ -2,7 +2,10 @@
 
 ```
 src/
-├── cpt_extension.c          entrypoint (DUCKDB_EXTENSION_ENTRYPOINT) + overload helper
+├── cpt_extension.c          cpt_register_all, the settings, the bind, the overload helper
+├── cpp/                     C++: the entry point and the query
+│   ├── cpt_extension.cpp    DUCKDB_CPP_EXTENSION_ENTRY: registers the C functions on a connection
+│   └── cpt_query.cpp        the ClientContext behind the bind's client context, for interrupts
 ├── core/                    numerical core: plain C11, no DuckDB headers
 │   ├── cost.c               cost interface, factory, l2 / normal / poisson
 │   ├── cost_l1.c            l1 via a wavelet matrix
@@ -13,10 +16,10 @@ src/
 │   ├── cpt_call.c           the shared row loop: prepare args and cost, run, write, report errors
 │   ├── cpt_pelt.c  cpt_binseg.c  cpt_dynp.c  cpt_crops.c  cpt_segment_stats.c
 │   ├── cpt_online.c         cpt_online_new / cpt_online_update / cpt_online
-└── include/                 cost.h, algo.h, list_io.h, cpt_functions.h, cpt_call.h,
-                             cpt_alloc.h (allocation wrappers), cpt_text.h
-duckdb_capi/                 duckdb.h + duckdb_extension.h from DuckDB v1.5.6 (TARGET_DUCKDB_VERSION)
-extension-ci-tools/          submodule: Makefiles, metadata footer script, CI workflows
+└── include/                 cost.h, algo.h, list_io.h, cpt_functions.h, cpt_call.h, cpt_query.h,
+                             cpt_alloc.h (allocation wrappers), cpt_text.h, cpt_extension.hpp
+duckdb/                      submodule: DuckDB v2.0.0, built with the extension
+extension-ci-tools/          submodule: Makefiles, CI workflows
 ```
 
 The layers depend in one direction only: `functions/` → `core/`. `core/` can be compiled and
@@ -47,16 +50,18 @@ To add a cost:
    `cpt_max_evaluations`. State in a comment why K = 0 (or another K) is valid.
 4. Add a naive evaluation to `test/c/test_core.c` and to `test/python/check_optimality.py`.
 
-## DuckDB C API usage
+## DuckDB API usage
 
-- **Stable API only.** `USE_UNSTABLE_C_API=0`, and the headers in `duckdb_capi/` come from v1.5.6. The
-  metadata footer says `C_STRUCT` with minimum version `v1.5.6`, and DuckDB hands the extension the
-  v1.5.6 function-pointer struct. Any DuckDB that supports that struct version can load it.
+- **A C++ extension on the C API.** The extension is built with DuckDB v2.0.0 and loads only into that
+  release. Its entry point (`src/cpp/cpt_extension.cpp`) registers the SQL functions, which are
+  written against DuckDB's C API (`duckdb.h`), on a connection to the loader's database. The C API
+  calls go straight to DuckDB inside the host. The `v1.5.x` branch keeps the build on the stable C
+  extension API, whose one binary loads in every DuckDB from 1.5.6 on.
 - **Overloads instead of defaults.** Each SQL function is a `duckdb_scalar_function_set` with one
   overload per trailing-argument count. All overloads share a callback, which checks
   `duckdb_data_chunk_get_column_count`. `cpt_pelt`'s third argument is either `DOUBLE` or `VARCHAR`;
   the callback checks the vector's logical type. A literal `NULL` in that position resolves without
-  ambiguity on 1.5.6 and 2.0.
+  ambiguity.
 - **NULL handling.** Every overload sets `duckdb_scalar_function_set_special_handling`, so NULL
   arguments reach the callback, where a NULL optional argument means "default".
 - **Flat input.** The C API wrapper calls `DataChunk::Flatten()` before invoking a scalar function, so
@@ -70,9 +75,10 @@ To add a cost:
 - **Errors.** `duckdb_scalar_function_set_error` stops the query, with messages prefixed by the
   function or argument name.
 - **Threads.** There is no global state; each call allocates and frees its own workspace.
-- **No interrupt check.** A scalar function cannot see that its query was interrupted. Every overload
-  therefore has a bind callback that reads the `cpt_max_evaluations` setting (registered with
-  `duckdb_register_config_option`) into bind data. The algorithms count weighted cost evaluations in a
-  `cpt_budget`, check it once per outer step, and return `CPT_BUDGET_EXCEEDED` when it runs out.
-  The limit is per series. DuckDB checks for interrupts only between calls, and one call processes a
-  whole vector (up to 2,048 series), so cancelling a query can still take up to 2,048 × the limit (#2).
+- **Work limit and interrupts.** Every overload has a bind callback that reads the
+  `cpt_max_evaluations` setting (registered with `duckdb_register_config_option`) and keeps the query
+  (`cpt_query.h`: the `ClientContext` behind the C API's client context). The algorithms count weighted
+  cost evaluations in a `cpt_budget` and charge it once per outer step. The charge returns
+  `CPT_BUDGET_EXCEEDED` when the limit is passed and `CPT_INTERRUPTED` when the query has been
+  interrupted, so a running call stops within one step of Ctrl-C or `con.interrupt()`, and every later
+  series of the same vector stops at its first step (#2).

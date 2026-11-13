@@ -39,7 +39,7 @@ static int run(int algo, const series *s, cpt_bkps *out, char *err) {
 	if (cpt_cost_create(kinds[algo], s->x, s->n, &cost, err)) {
 		return 1;
 	}
-	cpt_budget budget = {1000000000LL, 0};
+	cpt_budget budget = {1000000000LL, 0, NULL, NULL};
 	int rc = 0;
 	switch (algo) {
 	case 0:

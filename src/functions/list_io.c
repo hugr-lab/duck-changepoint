@@ -3,8 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-DUCKDB_EXTENSION_EXTERN
-
 bool cpt_row_is_valid(duckdb_vector vec, idx_t row) {
 	uint64_t *validity = duckdb_vector_get_validity(vec);
 	return duckdb_validity_row_is_valid(validity, row);

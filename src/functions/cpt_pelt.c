@@ -7,8 +7,6 @@
 
 #include <stdio.h>
 
-DUCKDB_EXTENSION_EXTERN
-
 static int penalty_from_name(duckdb_vector vec, idx_t row, int64_t n, int p, cpt_penalty *pen, char *err) {
 	const char *name;
 	size_t len;
