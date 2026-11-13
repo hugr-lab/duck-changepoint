@@ -6,8 +6,6 @@
 
 #include <stdio.h>
 
-DUCKDB_EXTENSION_EXTERN
-
 static int run_dynp(duckdb_data_chunk input, idx_t row, const cpt_cost *cost, const cpt_series_args *args,
                     cpt_budget *budget, cpt_bkps *out, char *err) {
 	if (!cpt_arg_present(input, 1, row)) {

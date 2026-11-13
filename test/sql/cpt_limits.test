@@ -1,5 +1,5 @@
 # name: test/sql/cpt_limits.test
-# description: cpt_max_evaluations bounds the work of one call (a running call cannot be interrupted)
+# description: cpt_max_evaluations bounds the work of one call
 # group: [cpt]
 
 require cpt

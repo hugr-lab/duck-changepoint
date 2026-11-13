@@ -1,8 +1,9 @@
 #
-# Numerical core under ASan/UBSan, SQL tests on the oldest supported DuckDB (1.5.6), and leak_check
-# (every SQL function and the core under macOS `leaks`).
+# Numerical core under ASan/UBSan and ThreadSanitizer, leak_check (every SQL function and the core under
+# macOS `leaks`) and the CRAP gate. The last two build DuckDB from the submodule. The SQL tests on DuckDB
+# 1.5.x run on the v1.5.x branch, which keeps the stable C API build.
 #
-name: Core and compatibility tests
+name: Core tests
 on:
   push:
     branches: [main]
@@ -25,37 +26,16 @@ jobs:
       - run: make test_core
       - run: make test_threads
 
-  compat:
-    name: SQL tests on DuckDB 1.5.6
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: make configure
-      - run: make test_compat
-
   leaks:
     name: leak_check (macOS leaks)
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 90   # builds DuckDB (reldebug) from the submodule
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install libduckdb
-        run: brew install duckdb
-      - run: make configure
-      - run: make leak_check
+      - uses: seanmiddleditch/gha-setup-ninja@v6
+      - run: GEN=ninja make leak_check
       - name: Upload leaks reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -65,17 +45,13 @@ jobs:
           if-no-files-found: ignore
 
   crap:
-    name: CRAP < 10 for every C function
+    name: CRAP < 10 for every C and C++ function
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - uses: astral-sh/setup-uv@v6
-      - run: make configure
+      - uses: seanmiddleditch/gha-setup-ninja@v6
       - run: make crap

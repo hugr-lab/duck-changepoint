@@ -1,37 +1,17 @@
 cmake_minimum_required(VERSION 3.5...3.29)
 option(DUCKDB_WASM_EXTENSION "Whether compiling for Wasm target" OFF)
 
-###
-# Configuration
-###
-if(NOT DEFINED EXTENSION_NAME)
-    message(FATAL_ERROR "DuckDB extension name is required")
-endif()
-if (DEFINED TARGET_DUCKDB_VERSION_MAJOR)
-    add_definitions(-DDUCKDB_EXTENSION_API_VERSION_MAJOR=${TARGET_DUCKDB_VERSION_MAJOR})
-endif()
-if (DEFINED TARGET_DUCKDB_VERSION_MINOR)
-    add_definitions(-DDUCKDB_EXTENSION_API_VERSION_MINOR=${TARGET_DUCKDB_VERSION_MINOR})
-endif()
-if (DEFINED TARGET_DUCKDB_VERSION_PATCH)
-    add_definitions(-DDUCKDB_EXTENSION_API_VERSION_PATCH=${TARGET_DUCKDB_VERSION_PATCH})
+# The cpt extension, built inside a DuckDB build (extension_config.cmake, `make release`), as the C++
+# extension template builds. src/cpp/cpt_extension.cpp is the entry point; the C sources in
+# src/functions register through DuckDB's C API (duckdb.h) inside the host. The stable C API build,
+# which loads in DuckDB 1.5.x, lives on the v1.5.x branch.
+if(NOT COMMAND build_loadable_extension)
+    message(FATAL_ERROR "cpt builds as part of DuckDB: run `make release` (see DEVELOPMENT.md)")
 endif()
 
-add_definitions(-DDUCKDB_EXTENSION_NAME=${EXTENSION_NAME})
-
-if (DEFINED DUCKDB_EXTENSION_API_VERSION_UNSTABLE)
-    message(FATAL_ERROR "cpt targets the stable C API only; do not set USE_UNSTABLE_C_API")
-endif()
-
-###
-# Build
-###
-project(${EXTENSION_NAME} LANGUAGES C)
+set(EXTENSION_NAME cpt)
+project(${EXTENSION_NAME} LANGUAGES C CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
 
 # Explicit source list (no globbing), grouped by layer.
 set(EXTENSION_SOURCES
@@ -49,53 +29,29 @@ set(EXTENSION_SOURCES
         src/functions/cpt_crops.c
         src/functions/cpt_segment_stats.c
         src/functions/cpt_online.c
-        # Entrypoint
         src/cpt_extension.c
+        # C++: entry point and the query (interrupts)
+        src/cpp/cpt_extension.cpp
+        src/cpp/cpt_query.cpp
 )
 
-# In-tree build as part of a DuckDB build (duckdb_extension_load(... SOURCE_DIR ...)).
-if(COMMAND build_static_extension_capi)
-    if(NOT DEFINED TARGET_DUCKDB_VERSION_MINOR)
-        set(TARGET_DUCKDB_VERSION_MINOR 5)
+build_static_extension(${EXTENSION_NAME} ${EXTENSION_SOURCES})
+build_loadable_extension(${EXTENSION_NAME} " " ${EXTENSION_SOURCES})
+
+foreach(_target ${EXTENSION_NAME}_extension ${EXTENSION_NAME}_loadable_extension)
+    # DUCKDB_C_API empty: duckdb.h would declare the C API dllimport on Windows, but this extension links
+    # DuckDB statically, and mingw's linker (unlike MSVC's) refuses __imp_ references to static symbols.
+    target_compile_definitions(${_target} PRIVATE "DUCKDB_C_API=")
+    target_include_directories(${_target} PRIVATE src/include)
+    # Strict C11, as the C API build had (CMAKE_C_EXTENSIONS OFF): with GNU extensions glibc declares names
+    # such as finite() that the sources may use for their own functions.
+    set_property(TARGET ${_target} PROPERTY C_STANDARD 11)
+    set_property(TARGET ${_target} PROPERTY C_EXTENSIONS OFF)
+    # tools/crap/crap.py instruments only this extension's code, not DuckDB.
+    if(CPT_COVERAGE)
+        target_compile_options(${_target} PRIVATE -fprofile-instr-generate -fcoverage-mapping -O0 -g)
     endif()
-    if(NOT DEFINED TARGET_DUCKDB_VERSION_PATCH)
-        set(TARGET_DUCKDB_VERSION_PATCH 6)
-    endif()
-    if(NOT DEFINED TARGET_DUCKDB_VERSION_MAJOR)
-        set(TARGET_DUCKDB_VERSION_MAJOR 1)
-    endif()
-    build_loadable_extension_capi(${EXTENSION_NAME} ${TARGET_DUCKDB_VERSION_MAJOR} ${TARGET_DUCKDB_VERSION_MINOR} ${TARGET_DUCKDB_VERSION_PATCH} ${EXTENSION_SOURCES})
-    build_static_extension_capi(${EXTENSION_NAME} ${TARGET_DUCKDB_VERSION_MAJOR} ${TARGET_DUCKDB_VERSION_MINOR} ${TARGET_DUCKDB_VERSION_PATCH} ${EXTENSION_SOURCES})
-    foreach(_capi_target ${EXTENSION_NAME}_loadable_extension ${EXTENSION_NAME}_extension)
-        target_include_directories(${_capi_target} PRIVATE src/include)
-    endforeach()
-    return()
-endif()
+endforeach()
 
-if (DUCKDB_WASM_EXTENSION)
-	add_library(${EXTENSION_NAME} STATIC ${EXTENSION_SOURCES})
-else()
-	add_library(${EXTENSION_NAME} SHARED ${EXTENSION_SOURCES})
-endif()
-
-# Hide symbols: only the entrypoint is exported (DUCKDB_CAPI_ENTRY_VISIBILITY)
-set_target_properties(${EXTENSION_NAME} PROPERTIES C_VISIBILITY_PRESET hidden)
-if (NOT APPLE AND NOT WIN32)
-    # Strip release binaries (ld64 on macOS treats -s as obsolete)
-    set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} -s")
-endif()
-
-if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(${EXTENSION_NAME} PRIVATE -Wall -Wextra -Wno-unused-parameter)
-endif()
-
-# Include own headers
-target_include_directories(${EXTENSION_NAME} PRIVATE src/include)
-
-# Include DuckDB C API headers
-target_include_directories(${EXTENSION_NAME} PRIVATE duckdb_capi)
-
-# libm for log/sqrt
-if (NOT WIN32 AND NOT DUCKDB_WASM_EXTENSION)
-    target_link_libraries(${EXTENSION_NAME} PRIVATE m)
-endif()
+install(TARGETS ${EXTENSION_NAME}_extension EXPORT "${DUCKDB_EXPORT_SET}"
+        LIBRARY DESTINATION "${INSTALL_LIB_DIR}" ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")

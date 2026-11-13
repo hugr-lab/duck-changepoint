@@ -9,8 +9,6 @@
 
 #include <stdio.h>
 
-DUCKDB_EXTENSION_EXTERN
-
 static int increasing_from_one(const int64_t *b, uint64_t count) {
 	int64_t prev = 0;
 	for (uint64_t i = 0; i < count; i++) {

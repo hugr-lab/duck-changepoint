@@ -97,12 +97,12 @@ static double hull_best(const cpt_hull *h, int64_t *best_tau, double *slope) {
 // Detector
 //===--------------------------------------------------------------------===//
 
-static int finite(double v) {
+static int is_finite(double v) {
 	return v - v == 0;
 }
 
 static int positive(double v) {
-	return v > 0 && finite(v);
+	return v > 0 && is_finite(v);
 }
 
 static int check_params(double threshold, int64_t train, double mean, double sd, char *err) {
@@ -114,7 +114,7 @@ static int check_params(double threshold, int64_t train, double mean, double sd,
 		snprintf(err, CPT_ERR_LEN, "train must be 0 (baseline given) or >= 2, got %lld", (long long)train);
 		return 1;
 	}
-	if (train == 0 && !(finite(mean) && positive(sd))) {
+	if (train == 0 && !(is_finite(mean) && positive(sd))) {
 		snprintf(err, CPT_ERR_LEN, "a given baseline needs a finite mean and a finite sd > 0");
 		return 1;
 	}
@@ -320,7 +320,7 @@ int cpt_online_encode(const cpt_online *d, uint8_t **out, size_t *len, char *err
 static int hull_valid(const cpt_hull *h, int64_t k) {
 	for (int64_t i = 0; i < h->len; i++) {
 		int64_t prev = i == 0 ? -1 : h->tau[i - 1];
-		if (h->tau[i] <= prev || h->tau[i] > k || !finite(h->v[i])) {
+		if (h->tau[i] <= prev || h->tau[i] > k || !is_finite(h->v[i])) {
 			return 0;
 		}
 	}
@@ -360,7 +360,7 @@ static int counts_valid(const cpt_online *d) {
 static int values_valid(const cpt_online *d) {
 	double values[] = {d->mean, d->sd, d->s, d->train_mean, d->train_m2, d->statistic};
 	for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
-		if (!finite(values[i])) {
+		if (!is_finite(values[i])) {
 			return 0;
 		}
 	}

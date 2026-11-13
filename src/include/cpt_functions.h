@@ -1,6 +1,6 @@
 #pragma once
 
-#include "duckdb_extension.h"
+#include "duckdb.h"
 
 // The C API has no DEFAULT parameters, so every function is registered as a scalar function set
 // with one overload per trailing-argument count. All overloads of a function share one callback,
@@ -30,3 +30,7 @@ bool cpt_register_dynp(duckdb_connection connection);
 bool cpt_register_crops(duckdb_connection connection);
 bool cpt_register_segment_stats(duckdb_connection connection);
 bool cpt_register_online(duckdb_connection connection);
+
+// Every function and setting of the extension; false if one failed to register. Called by the C++ entry
+// point (src/cpp/cpt_extension.cpp) with a connection to the loader's database.
+bool cpt_register_all(duckdb_connection connection);

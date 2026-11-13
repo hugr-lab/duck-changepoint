@@ -3,7 +3,7 @@
 // The row loop shared by the SQL functions. Each function supplies only what is specific to it: where
 // its cost and min_size arguments are, how to read its other arguments, and which algorithm to run.
 
-#include "duckdb_extension.h"
+#include "duckdb.h"
 
 #include "algo.h"
 #include "cost.h"

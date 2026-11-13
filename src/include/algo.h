@@ -18,16 +18,20 @@ typedef struct {
 void cpt_bkps_free(cpt_bkps *b);
 
 // Limit on cost evaluations for one SQL call, in units of one O(1) evaluation (an l1 evaluation
-// counts log2 n units, see cpt_cost.eval_weight). The C API cannot tell a scalar function that its query
-// was interrupted, so this bounds how long a call can run (PELT approaches O(n^2) on long series with
-// few changes). Algorithms return CPT_BUDGET_EXCEEDED when n_evals passes max_evals.
-// max_evals <= 0 means unlimited. A NULL budget is unlimited.
+// counts log2 n units, see cpt_cost.eval_weight), and the place a running call learns that its query was
+// interrupted: every charge asks interrupted(interrupt_ctx), so an algorithm stops within one outer step.
+// Algorithms return CPT_BUDGET_EXCEEDED when n_evals passes max_evals and CPT_INTERRUPTED when the
+// callback says so. max_evals <= 0 means unlimited; a NULL callback is never interrupted. A NULL budget
+// is unlimited and never interrupted.
 typedef struct {
 	int64_t max_evals;
 	int64_t n_evals;
+	int (*interrupted)(void *ctx);
+	void *interrupt_ctx;
 } cpt_budget;
 
 #define CPT_BUDGET_EXCEEDED 2
+#define CPT_INTERRUPTED 3
 
 // Charge units of work; returns CPT_BUDGET_EXCEEDED (and writes err) once the limit is passed.
 int cpt_budget_charge(cpt_budget *budget, int64_t units, char *err);

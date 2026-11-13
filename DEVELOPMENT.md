@@ -2,36 +2,38 @@
 
 ## Toolchain
 
-- CMake ≥ 3.5, a C11 compiler (clang or gcc; MSVC through the CI toolchain), Python 3, git.
-- No external libraries: libc, libm and the DuckDB C API headers in `duckdb_capi/`.
-- `extension-ci-tools` is a git submodule (`git submodule update --init`).
+- CMake ≥ 3.5, a C11 and C++17 compiler (clang or gcc; MSVC through the CI toolchain), Python 3, git,
+  ninja (optional, `GEN=ninja`), uv for the Python checks.
+- No external libraries: libc, libm and DuckDB.
+- `duckdb` (v2.0.0) and `extension-ci-tools` are git submodules (`git submodule update --init`).
 
 ## Build
 
 ```sh
-make configure      # configure/venv (DuckDB + sqllogictest runner), configure/platform.txt, version
-make release        # cmake_build/release -> build/release/cpt.duckdb_extension (with metadata footer)
-make debug          # same, debug
+GEN=ninja make release   # DuckDB from the submodule + build/release/extension/cpt/cpt.duckdb_extension
+GEN=ninja make debug     # same, debug
 ```
 
-The version in the footer comes from `git describe` (`configure/extension_version.txt`). In a checkout
-without commits, pass `EXTENSION_VERSION=v0.1.0-dev` to `make configure`. Otherwise the footer gets
-git's error text and DuckDB refuses the file with "Unknown ABI type".
+`make release` is the extension template's build: it compiles DuckDB with the extension linked into
+the shell and `unittest`, and writes the loadable binary. The first build takes several minutes; later
+ones only recompile what changed. `OVERRIDE_GIT_DESCRIBE=v2.0.0` in the Makefile stamps the version:
+DuckDB 2.0 does not read it from git, and without it the binary names the submodule's commit hash and
+refuses to load into the released DuckDB. `compile_commands.json` is written to `build/release/`.
 
-`compile_commands.json` is written to `cmake_build/release/`. `.clangd` points there.
+`src/cpp/cpt_extension.cpp` is the entry point. It registers the C functions in `src/functions`
+through DuckDB's C API on a connection to the loader's database (inside DuckDB a `duckdb_connection` is
+a `Connection *`); `src/cpp/cpt_query.cpp` gives the bind the query, for interrupts. CMakeLists.txt only
+builds as part of DuckDB's build.
 
-## Targeting DuckDB versions
+## DuckDB versions
 
-`TARGET_DUCKDB_VERSION=v1.5.6` in the Makefile is the oldest supported release, and
-`duckdb_capi/*.h` must be the headers from exactly that tag:
+`main` is built and tested for DuckDB 2.0.0, the `duckdb` submodule. A C++ extension is tied to the
+exact DuckDB release it was built against: a new release means moving the submodule, `OVERRIDE_GIT_DESCRIBE`
+and `duckdb_version` in `.github/workflows/MainDistributionPipeline.yml`.
 
-```sh
-make update_duckdb_headers   # downloads duckdb.h / duckdb_extension.h for TARGET_DUCKDB_VERSION
-```
-
-Raising the minimum version means changing both, then checking with `make test_compat
-COMPAT_DUCKDB_VERSION=<new>`. Never set `USE_UNSTABLE_C_API=1`: CMake refuses, because the binary
-would then load only in that exact DuckDB build.
+The `v1.5.x` branch keeps the stable C API build (headers from v1.5.6 in `duckdb_capi/`, `make
+test_compat`), whose one binary loads in every DuckDB from 1.5.6 on. A fix to the core or the SQL
+functions that matters for 1.5.x users goes to both branches.
 
 ## Tests
 
@@ -41,7 +43,7 @@ See [docs/TESTING.md](docs/TESTING.md). Before a commit:
 make release test_release test_core
 ```
 
-Before a release, also run `make test_compat compare_ruptures check_optimality bench leak_check
+Before a release, also run `make compare_ruptures check_optimality bench leak_check
 joern_leaks crap`, and
 `make test` in the companion `duck-changepoint-reference` repository (R changepoint comparison).
 
@@ -66,10 +68,10 @@ joern_leaks crap`, and
 
 ## Layout
 
-The layout follows hugr-lab/mssql-extension, adapted to the C API template:
+The layout follows hugr-lab/mssql-extension:
 
 ```
-src/            extension sources (core/, functions/, include/)
+src/            extension sources (core/ and functions/ in C, cpp/ the C++ entry point, include/)
 test/sql/       SQLLogicTests (gating)
 test/c/         standalone C tests with sanitizers
 test/python/    manual cross-checks (ruptures, optimality)

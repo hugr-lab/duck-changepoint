@@ -2,8 +2,8 @@
 
 | Layer | Command | Gating | What it checks |
 |---|---|---|---|
-| SQL logic tests | `make test` (debug), `make test_release` | yes | `test/sql/*.test`: results, errors, NULL/empty handling, overloads, GROUP BY, synthetic series |
-| Oldest DuckDB | `make test_compat` | recommended before release | the same SQL tests with DuckDB 1.5.6 |
+| SQL logic tests | `make test_release` (`make test_debug`) | yes | `test/sql/*.test` in DuckDB's unittest: results, errors, NULL/empty handling, overloads, GROUP BY, synthetic series |
+| DuckDB 1.5.x | `make test_compat` on the `v1.5.x` branch | there | the same SQL tests with DuckDB 1.5.6, on the stable C API build |
 | Core C tests | `make test_core` | yes (CI) | `test/c/test_core.c` under ASan + UBSan: costs vs naive formulas, PELT vs Optimal Partitioning, Dynp vs exhaustive search, valid segmentations |
 | Concurrency (core) | `make test_threads` | yes (CI) | `test/c/test_threads.c` under ThreadSanitizer: 8 threads run every algorithm on series from one shared buffer and match a single-threaded reference |
 | ruptures cross-check | `make compare_ruptures` | manual | 200 random series: PELT (l2, l1), Binseg (pen, n_bkps), Dynp |
@@ -30,7 +30,7 @@
 | `cpt_talk_examples.test` | the examples in docs/examples-from-talks.md (FOCuS Figure 1, detection delay, Hunter-style benchmark and latency) |
 
 The synthetic series are generated in SQL right after `SELECT setseed(0.42)`. They are smaller than
-one vector, so a single thread generates them, and DuckDB 1.5.6 and 2.0 produce the same values.
+one vector, so a single thread generates them, and every DuckDB release produces the same values.
 
 Results are in the 1-based convention. Expected values were checked by reasoning about the costs,
 recorded in the comments next to the less obvious ones, and not copied from the output.
@@ -124,8 +124,7 @@ on failure `cpt_cost_create` releases the partial index with `cpt_cost_destroy`.
 ## Running a single test file
 
 ```sh
-configure/venv/bin/python3 -m duckdb_sqllogictest --test-dir test/sql \
-    --external-extension build/release/cpt.duckdb_extension
+build/release/test/unittest test/sql/cpt_pelt.test
 ```
 
-The runner stops at the first failing file.
+`unittest` loads the extension from the build's local repository, as `make test_release` does.

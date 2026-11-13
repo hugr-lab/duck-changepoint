@@ -70,6 +70,10 @@ int cpt_budget_charge(cpt_budget *budget, int64_t units, char *err) {
 		return 0;
 	}
 	budget->n_evals += units;
+	if (budget->interrupted && budget->interrupted(budget->interrupt_ctx)) {
+		snprintf(err, CPT_ERR_LEN, "interrupted");
+		return CPT_INTERRUPTED;
+	}
 	if (budget->max_evals > 0 && budget->n_evals > budget->max_evals) {
 		snprintf(err, CPT_ERR_LEN, "work limit reached after %lld evaluation units (limit %lld)",
 		         (long long)budget->n_evals, (long long)budget->max_evals);

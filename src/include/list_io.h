@@ -5,7 +5,7 @@
 // The C API flattens every input chunk before calling a scalar function (constant and dictionary
 // vectors arrive as flat vectors), so rows can be addressed directly.
 
-#include "duckdb_extension.h"
+#include "duckdb.h"
 
 #include <stdint.h>
 
