@@ -10,6 +10,7 @@ not know about stops it with an error that names it.
 """
 import os
 import re
+import shutil
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +26,10 @@ def sections(text):
     return head, {rest[i].strip(): rest[i + 1] for i in range(0, len(rest), 2)}
 
 head, sec = sections(readme)
+
+# Every run writes the whole tree afresh, so a page the script no longer writes cannot linger, and the
+# check in CI (git status --porcelain) sees renamed, dropped and new pages as well as changed ones.
+shutil.rmtree(OUT, ignore_errors=True)
 
 LINKS = {
     "#installation": "/getting-started/", "#functions": "/reference/functions/",
@@ -52,8 +57,12 @@ def demote(text):
     """### -> ## and so on, for a README section that becomes a page."""
     return re.sub(r"^(#+)#", r"\1", text, flags=re.M)
 
-def page(path, title, body, sidebar_label=None):
-    front = ["---", "title: " + '"' + title.replace('"', '\\"') + '"']
+EDIT = "https://github.com/hugr-lab/duck-changepoint/edit/main/"
+
+def page(path, title, body, source, sidebar_label=None):
+    """Writes website/docs/<path>. "Edit this page" opens source, the file the page is built from, since an
+    edit to the generated page would be overwritten by the next run."""
+    front = ["---", "title: " + '"' + title.replace('"', '\\"') + '"', f"custom_edit_url: {EDIT}{source}"]
     if sidebar_label:
         front.append(f"sidebar_label: {sidebar_label}")
     front.append("---")
@@ -83,25 +92,25 @@ NEXT = """
 - [Development](/development/): building, testing and the architecture.
 """
 page("index.md", "cpt: change point detection in DuckDB", intro + NEXT + "\n## License\n" + sec["License"],
-     sidebar_label="Overview")
-page("getting-started.md", "Getting started", sec["Installation"])
-page("reference/functions.md", "Functions", demote(sec["Functions"]))
-page("online.md", "Online detection", demote(sec["Online detection"]))
-page("online-details.md", "Online detection in detail", doc_body("docs/online.md"))
-page("examples.md", "Examples", demote(sec["Examples"]))
-page("talks.md", "Examples from talks", doc_body("docs/examples-from-talks.md"))
-page("costs.md", "Costs and penalties", "## Costs\n" + sec["Costs"] + "\n## Penalties\n" + sec["Penalties"])
+     sidebar_label="Overview", source="README.md")
+page("getting-started.md", "Getting started", sec["Installation"], source="README.md")
+page("reference/functions.md", "Functions", demote(sec["Functions"]), source="README.md")
+page("online.md", "Online detection", demote(sec["Online detection"]), source="README.md")
+page("online-details.md", "Online detection in detail", doc_body("docs/online.md"), source="docs/online.md")
+page("examples.md", "Examples", demote(sec["Examples"]), source="README.md")
+page("talks.md", "Examples from talks", doc_body("docs/examples-from-talks.md"), source="docs/examples-from-talks.md")
+page("costs.md", "Costs and penalties", "## Costs\n" + sec["Costs"] + "\n## Penalties\n" + sec["Penalties"], source="README.md")
 page("differences.md", "Differences from ruptures and changepoint",
-     demote(sec["Differences from ruptures and changepoint"]))
+     demote(sec["Differences from ruptures and changepoint"]), source="README.md")
 page("performance.md", "Performance and limits",
-     "## Performance\n" + sec["Performance"] + "\n## Limits and cancellation\n" + sec["Limits and cancellation"])
-page("reference/costs-and-penalties.md", "Costs and penalties: the formulas", doc_body("docs/costs-and-penalties.md"))
-page("reference/algorithms.md", "Algorithms", doc_body("docs/algorithms.md"))
+     "## Performance\n" + sec["Performance"] + "\n## Limits and cancellation\n" + sec["Limits and cancellation"], source="README.md")
+page("reference/costs-and-penalties.md", "Costs and penalties: the formulas", doc_body("docs/costs-and-penalties.md"), source="docs/costs-and-penalties.md")
+page("reference/algorithms.md", "Algorithms", doc_body("docs/algorithms.md"), source="docs/algorithms.md")
 dev = demote(sec["Building and testing"]) + "\n" + re.sub(r"\A# .+\n", "", open(os.path.join(ROOT, "DEVELOPMENT.md")).read())
-page("development/index.md", "Development", dev)
-page("development/architecture.md", "Architecture", doc_body("docs/architecture.md"))
-page("development/testing.md", "Testing", doc_body("docs/TESTING.md"))
-page("references.md", "Talks and references", "## Talks\n" + sec["Talks"] + "\n## References\n" + sec["References"])
+page("development/index.md", "Development", dev, source="DEVELOPMENT.md")
+page("development/architecture.md", "Architecture", doc_body("docs/architecture.md"), source="docs/architecture.md")
+page("development/testing.md", "Testing", doc_body("docs/TESTING.md"), source="docs/TESTING.md")
+page("references.md", "Talks and references", "## Talks\n" + sec["Talks"] + "\n## References\n" + sec["References"], source="README.md")
 KNOWN = {"Contents", "Installation", "Functions", "Online detection", "Examples", "Costs", "Penalties",
          "Differences from ruptures and changepoint", "Performance", "Limits and cancellation",
          "Building and testing", "License", "Talks", "References"}

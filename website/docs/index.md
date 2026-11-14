@@ -1,5 +1,6 @@
 ---
 title: "cpt: change point detection in DuckDB"
+custom_edit_url: https://github.com/hugr-lab/duck-changepoint/edit/main/README.md
 sidebar_label: Overview
 ---
 

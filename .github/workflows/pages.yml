@@ -46,7 +46,11 @@ jobs:
       - name: The pages match the README and docs/
         run: |
           python3 website/sync_pages.py
-          git diff --exit-code -- website/docs
+          # porcelain, not git diff: it also lists pages the script added (untracked) or dropped (deleted).
+          if [ -n "$(git status --porcelain -- website/docs)" ]; then
+            git status --short -- website/docs
+            exit 1
+          fi
 
       - name: Build the docs site
         run: |

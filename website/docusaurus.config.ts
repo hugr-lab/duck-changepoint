@@ -42,7 +42,8 @@ const config: Config = {
           // in website/ and commit the snapshot. Docusaurus then serves the latest released version at the
           // root and the live docs/ tree as "Next" under /next/ with an "unreleased" banner. Until the first
           // snapshot exists, the current docs serve at the root.
-          editUrl: 'https://github.com/hugr-lab/duck-changepoint/tree/main/website/',
+          // No editUrl: every page is generated, and sync_pages.py gives each one a custom_edit_url to the
+          // file it is built from (README.md, DEVELOPMENT.md or docs/*.md).
           showLastUpdateTime: true,
         },
         blog: false,
